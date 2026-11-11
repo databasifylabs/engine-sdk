@@ -1,0 +1,93 @@
+name: engine refresh
+
+on:
+  workflow_call:
+    inputs:
+      engine:
+        description: The engine whose pins to refresh, as named in images/<engine> and versions.json
+        required: true
+        type: string
+      versions-file:
+        description: The versions file, relative to the repository root
+        required: false
+        type: string
+        default: versions.json
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+env:
+  ENGINE: ${{ inputs.engine }}
+  VERSIONS: ${{ inputs.versions-file }}
+  IMAGES: ../engine-sdk/tools/images.sh
+  BRANCH: refresh/images
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: engine
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: engine
+
+      - name: Read the Go version of the images
+        id: go
+        run: echo "version=$(jq -er '.go.tag | split("-")[0]' "$VERSIONS")" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache: false
+
+      - name: Read the SDK version go.mod requires
+        id: sdk
+        run: echo "version=$(go mod edit -json | jq -er '.Require[] | select(.Path == "github.com/databasifylabs/engine-sdk") | .Version')" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the SDK tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: databasifylabs/engine-sdk
+          ref: ${{ steps.sdk.outputs.version }}
+          path: engine-sdk
+          persist-credentials: false
+
+      - name: Move pins to the newest patch of each line
+        run: |
+          readarray -t keys < <("$IMAGES" --versions "$VERSIONS" keys "$ENGINE" | jq -r '.[]')
+          "$IMAGES" --versions "$VERSIONS" refresh "${keys[@]}" | tee "$RUNNER_TEMP/changes.md"
+
+      - name: Open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- "$VERSIONS"; then
+            echo "Every pin is current."
+            exit 0
+          fi
+          base=$(gh repo view "$GITHUB_REPOSITORY" --json defaultBranchRef --jq .defaultBranchRef.name)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add "$VERSIONS"
+          git commit --quiet --message "chore: refresh image pins"
+          git push --force origin "$BRANCH"
+          {
+            echo "Newest patch of every pinned line. CI builds and smoke-tests the branch; merging to \`$base\` publishes and moves the tags."
+            echo
+            cat "$RUNNER_TEMP/changes.md"
+          } > "$RUNNER_TEMP/body.md"
+          if [ "$(gh pr list --head "$BRANCH" --state open --json number --jq length)" = 0 ]; then
+            gh pr create --base "$base" --head "$BRANCH" --title "Refresh image pins" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr edit "$BRANCH" --body-file "$RUNNER_TEMP/body.md"
+          fi
+          gh workflow run images.yml --ref "$BRANCH"
