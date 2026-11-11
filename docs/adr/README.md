@@ -50,6 +50,7 @@ Options that were tried or rejected, and why.
 | [0004](0004-the-host-binary-deploys-the-container.md) | The host binary deploys the container | Accepted |
 | [0005](0005-images-are-the-only-release.md) | Images are the only release | Accepted |
 | [0006](0006-engines-declare-their-host-profile.md) | Engines declare their host profile | Accepted |
-| [0007](0007-engines-publish-through-the-sdk-workflows.md) | Engines publish through the SDK's reusable workflows | Accepted |
+| [0007](0007-engines-publish-through-the-sdk-workflows.md) | Engines publish through the SDK's reusable workflows | Superseded by 0008 |
+| [0008](0008-engines-call-the-sdk-workflows-at-a-pinned-commit.md) | Engines call the SDK workflows at a pinned commit | Accepted |
 
 ADRs 0002 to 0005 were carried over from `databasifylabs/engines` (there 0001, 0002, 0009 and 0013), with paths and facts updated for this repository.

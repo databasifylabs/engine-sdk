@@ -169,12 +169,12 @@ To build against a local checkout of the SDK or of another engine module, add a 
 
 ## Publishing Images
 
-An engine repository calls two reusable workflows at the SDK version its `go.mod` requires:
+An engine repository calls two reusable workflows at a full SDK commit SHA (see [ADR 0008](docs/adr/0008-engines-call-the-sdk-workflows-at-a-pinned-commit.md)):
 
 ```yaml
 jobs:
   images:
-    uses: databasifylabs/engine-sdk/.github/workflows/engine-images.yml@v0.2.0
+    uses: databasifylabs/engine-sdk/.github/workflows/engine-images.yml@398de5e1c8023525ca7b1990e2b39525017b2c4f
     with:
       engine: example
       versions-file: versions.json

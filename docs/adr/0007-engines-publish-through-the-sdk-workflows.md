@@ -1,6 +1,6 @@
 # 0007. Engines publish through the SDK's reusable workflows
 
-- Status: Accepted
+- Status: Superseded by 0008
 - Date: 2026-11-11
 
 ## Context
