@@ -150,7 +150,9 @@ jobs:
           cache-dependency-path: engine/go.sum
 
       - name: Create a buildx builder
-        run: docker buildx create --name databasify --driver docker-container --use
+        run: |
+          printf '[dns]\n  nameservers = ["1.1.1.1", "8.8.8.8"]\n' > "$RUNNER_TEMP/buildkitd.toml"
+          docker buildx create --name databasify --driver docker-container --buildkitd-config "$RUNNER_TEMP/buildkitd.toml" --use
 
       - name: Build
         run: '"$IMAGES" --versions "$VERSIONS" build "$KEY" --platform "linux/$ARCH" --load --tag "smoke:$KEY"'
