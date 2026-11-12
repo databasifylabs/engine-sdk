@@ -19,7 +19,7 @@ import (
 	"github.com/databasifylabs/engine-sdk/supervise"
 )
 
-const Version = "0.2.0"
+const Version = "0.2.2"
 
 const usageText = `usage: databasify <command>
 

@@ -28,7 +28,7 @@ Nothing in it names a specific engine.
 Add the SDK to an engine module. A new engine should start from [engine-template](https://github.com/databasifylabs/engine-template).
 
 ```bash
-go get github.com/databasifylabs/engine-sdk@v0.2.1
+go get github.com/databasifylabs/engine-sdk@v0.2.2
 ```
 
 ## Writing an Engine
