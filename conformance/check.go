@@ -50,6 +50,10 @@ var replies = map[string]decoder{
 	"cluster rejoin": as[dtos.Operation](), "cluster membership": as[dtos.Empty](),
 	"config fields": as[responses.ConfigFields](), "config show": as[responses.ConfigShow](), "config tune": as[responses.ConfigTune](),
 	"pool list": as[responses.PoolList](), "pool create": as[dtos.Empty](), "pool update": as[dtos.Empty](), "pool delete": as[dtos.Empty](),
+	"runtime info": as[responses.RuntimeInfo](), "runtime run": as[responses.RuntimeRun](),
+	"task start": as[dtos.Operation](), "task status": as[dtos.Operation](), "task log": as[responses.TaskLog](), "task stop": as[dtos.Operation](),
+	"file put": as[dtos.Empty](), "file get": as[responses.FileGet](),
+	"service start": as[dtos.Empty](), "service stop": as[dtos.Empty](), "service restart": as[dtos.Empty](), "service reload": as[dtos.Empty](), "service status": as[responses.ServiceStatus](),
 }
 
 func validate(decode decoder, stdout []byte) error {

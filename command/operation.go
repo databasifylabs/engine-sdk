@@ -48,6 +48,11 @@ func (o operations) start(kind string, r route, input []byte) (dtos.Operation, e
 	if err != nil {
 		return dtos.Operation{}, err
 	}
+
+	return o.begin(kind, key, input)
+}
+
+func (o operations) begin(kind string, key string, input []byte) (dtos.Operation, error) {
 	if existing, found, err := o.load(key); found || err != nil {
 		return o.existing(existing, kind, err)
 	}
@@ -211,13 +216,21 @@ func RunOperation(ctx context.Context, engine Engine, key string) int {
 	if err != nil || !found {
 		return ctl.ExitInternal
 	}
+	if r.Operation.Kind == taskKind {
+		return exitOf(o.runTask(ctx, key, os.Stdout))
+	}
 	route, known := routes[r.Operation.Kind]
 	if !known || !route.long() {
 		_ = o.finish(r, errors.New("this engine cannot run "+r.Operation.Kind))
 
 		return ctl.ExitInternal
 	}
-	if err := o.runNow(ctx, engine, route, key); err != nil {
+
+	return exitOf(o.runNow(ctx, engine, route, key))
+}
+
+func exitOf(err error) int {
+	if err != nil {
 		return 1
 	}
 
