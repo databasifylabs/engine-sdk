@@ -5,6 +5,7 @@
 - [Writing an Engine](#writing-an-engine)
 - [Command Groups](#command-groups)
 - [Calling Commands](#calling-commands)
+- [Runtime](#runtime)
 - [Flows](#flows)
 - [Building Images](#building-images)
 - [Publishing Images](#publishing-images)
@@ -27,7 +28,7 @@ Nothing in it names a specific engine.
 Add the SDK to an engine module. A new engine should start from [engine-template](https://github.com/databasifylabs/engine-template).
 
 ```bash
-go get github.com/databasifylabs/engine-sdk@v0.2.0
+go get github.com/databasifylabs/engine-sdk@v0.2.1
 ```
 
 ## Writing an Engine
@@ -82,6 +83,36 @@ echo '{}' | databasify node status
 ```
 
 `cmd/databasify-host` is the host binary that Databasify installs on every server. It runs `host deploy`, `host remove`, `host tune` and `host restore`, and forwards every other well-formed `<group> <verb>` into the engine container.
+
+## Runtime
+
+Every engine answers these engine-neutral commands. The app uses them to run its own scripts inside the container.
+
+| Command | Request | Reply |
+|---|---|---|
+| `runtime info` | `{}` | `protocol` (`1`), `engine`, `sdk` |
+| `runtime run` | `script`, `env`, `user`, `timeoutSeconds` (1–3600) | `exit`, `stdout`, `stderr`, `truncated` |
+| `task start` | `key`, `script`, `env`, `user` | the task's operation |
+| `task status`, `task stop` | `key` | the task's operation |
+| `task log` | `key` | the last 50 `lines` of the task's log |
+| `file put` | `path`, `contentBase64`, `mode`, `owner` | `{}` |
+| `file get` | `path` | `contentBase64`, `exists` |
+| `service start`, `stop`, `restart`, `status` | `units` | `{}`, or each unit's `activeState`, `subState` and `result` |
+| `service reload` | `{}` | `{}`, after re-reading `conf/processes.json` |
+
+- **Scripts run as `bash -euo pipefail -s`, with the script on stdin and never in argv.** Passwords inside a script never show up in `ps`.
+- **`runtime run` limits:**
+  - stdout and stderr are each capped at 1 MiB, and `truncated` says when output was cut;
+  - a timeout kills the whole process group and replies with exit `124`.
+- **Tasks are operations with a caller-chosen key** (`^[a-z0-9][a-z0-9.-]{0,79}$`):
+  - starting a key again returns the existing task instead of running it twice;
+  - a non-zero exit fails the task with `script exited <code>: <last stderr line>`.
+- **File paths are relative to the engine home.** Absolute paths, `..`, and paths that leave the home through a symlink are refused with `invalid_request`. Writes are atomic.
+
+```bash
+echo '{"script":"psql -XAtc \"SELECT 1\"","env":{},"user":"postgres","timeoutSeconds":30}' | databasify runtime run
+# {"exit":0,"stdout":"1\n","stderr":"","truncated":false}
+```
 
 ## Flows
 

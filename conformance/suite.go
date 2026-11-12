@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,8 @@ import (
 )
 
 const (
+	runtimeProtocol = 1
+	conformanceFile = "state/conformance-check"
 	commandTimeout  = 60 * time.Second
 	quotedPassword  = "p'a\"s\\s wörd"
 	changedPassword = "n'e\"w\\p wörd"
@@ -139,6 +142,9 @@ func (l *lifecycle) discoverCapabilities() bool {
 func (l *lifecycle) steps() []step {
 	return []step{
 		{"engine info", "engine info", l.checkEngineInfo},
+		{"runtime info", "runtime info", l.checkRuntimeInfo},
+		{"runtime run", "runtime run", l.checkRuntimeRun},
+		{"file round trip", "file get", l.checkFileRoundTrip},
 		{"engine host-profile", "engine host-profile", func() error { return l.expectSuccess("engine host-profile", dtos.Empty{}) }},
 		{"node status", "node status", func() error { return l.expectSuccess("node status", dtos.Empty{}) }},
 		{"account list", "account list", func() error { return l.expectSuccess("account list", dtos.Empty{}) }},
@@ -347,6 +353,43 @@ func (l *lifecycle) checkEngineInfo() error {
 	}
 	if reply.Sdk == "" {
 		return fmt.Errorf("engine info reports no sdk version")
+	}
+	return nil
+}
+
+func (l *lifecycle) checkRuntimeInfo() error {
+	reply, err := callReply[responses.RuntimeInfo](l, "runtime info", dtos.Empty{})
+	if err != nil {
+		return err
+	}
+	if reply.Protocol != runtimeProtocol {
+		return fmt.Errorf("runtime info reports protocol %d, want %d", reply.Protocol, runtimeProtocol)
+	}
+	return nil
+}
+
+func (l *lifecycle) checkRuntimeRun() error {
+	reply, err := callReply[responses.RuntimeRun](l, "runtime run", requests.RuntimeRun{Script: "echo ok", Env: map[string]string{}, TimeoutSeconds: 10})
+	if err != nil {
+		return err
+	}
+	if reply.Exit != 0 || reply.Stdout != "ok\n" {
+		return fmt.Errorf("runtime run of echo ok replied exit %d, stdout %q", reply.Exit, reply.Stdout)
+	}
+	return nil
+}
+
+func (l *lifecycle) checkFileRoundTrip() error {
+	content := base64.StdEncoding.EncodeToString([]byte(l.database))
+	if err := l.expectSuccess("file put", requests.FilePut{Path: conformanceFile, ContentBase64: content, Mode: 0o600}); err != nil {
+		return err
+	}
+	reply, err := callReply[responses.FileGet](l, "file get", requests.FileGet{Path: conformanceFile})
+	if err != nil {
+		return err
+	}
+	if !reply.Exists || reply.ContentBase64 != content {
+		return fmt.Errorf("file get of %s returned %+v, want what file put wrote", conformanceFile, reply)
 	}
 	return nil
 }

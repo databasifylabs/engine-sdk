@@ -97,6 +97,9 @@ func checkValue(t reflect.Type, tag reflect.StructTag, value any, path string) e
 		if minimum, ok := limit(tag, "min"); ok && int(value.(float64)) < minimum {
 			return fmt.Errorf("%s: must be at least %d", path, minimum)
 		}
+		if maximum, ok := limit(tag, "max"); ok && int(value.(float64)) > maximum {
+			return fmt.Errorf("%s: must be at most %d", path, maximum)
+		}
 	}
 
 	return nil

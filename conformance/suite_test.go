@@ -32,10 +32,11 @@ type fakeEngine struct {
 	override  override
 	databases map[string]bool
 	users     map[string]bool
+	files     map[string]string
 }
 
 func newFakeEngine(omit string, override override) *fakeEngine {
-	return &fakeEngine{omit: omit, override: override, databases: map[string]bool{}, users: map[string]bool{}}
+	return &fakeEngine{omit: omit, override: override, databases: map[string]bool{}, users: map[string]bool{}, files: map[string]string{}}
 }
 
 func (f *fakeEngine) Run(_ context.Context, argv []string, stdin []byte) ([]byte, int, error) {
@@ -93,6 +94,24 @@ func (f *fakeEngine) answer(command string, stdin []byte) ([]byte, int) {
 		})
 	case "operation status", "operation cancel":
 		return fakeError("not_found"), 1
+	case "runtime info":
+		return decoded(stdin, func(dtos.Empty) ([]byte, int) {
+			return success(responses.RuntimeInfo{Protocol: 1, Engine: "fake", Sdk: "0.2.0"})
+		})
+	case "runtime run":
+		return decoded(stdin, func(r requests.RuntimeRun) ([]byte, int) {
+			return success(responses.RuntimeRun{Stdout: strings.TrimPrefix(r.Script, "echo ") + "\n"})
+		})
+	case "file put":
+		return decoded(stdin, func(r requests.FilePut) ([]byte, int) {
+			f.files[r.Path] = r.ContentBase64
+			return success(dtos.Empty{})
+		})
+	case "file get":
+		return decoded(stdin, func(r requests.FileGet) ([]byte, int) {
+			content, exists := f.files[r.Path]
+			return success(responses.FileGet{ContentBase64: content, Exists: exists})
+		})
 	}
 	return fakeError("unsupported"), 1
 }
@@ -242,6 +261,7 @@ func answering(commands []string, reply func(command string) []byte) override {
 var fakeCommands = []string{
 	"account list", "database create", "database drop", "engine capabilities", "engine host-profile", "engine info", "node status",
 	"operation cancel", "operation status", "user create", "user drop", "user grant", "user set-password",
+	"runtime info", "runtime run", "file put", "file get",
 }
 
 var cannedReplies = map[string]string{
@@ -314,4 +334,19 @@ func TestRunFailsWhenHostProfileFails(t *testing.T) {
 		return fakeError("internal"), 1, command == "engine host-profile"
 	}
 	assertFailedSteps(t, newFakeEngine("", broken), "engine host-profile")
+}
+
+func TestRunFailsOnAWrongRuntimeProtocol(t *testing.T) {
+	future := answering([]string{"runtime info"}, func(string) []byte { return []byte(`{"protocol":2,"engine":"fake","sdk":"0.2.0"}`) })
+	assertFailedSteps(t, newFakeEngine("", future), "runtime info")
+}
+
+func TestRunFailsWhenRuntimeRunLosesOutput(t *testing.T) {
+	silent := answering([]string{"runtime run"}, func(string) []byte { return []byte(`{"exit":0,"stdout":"","stderr":"","truncated":false}`) })
+	assertFailedSteps(t, newFakeEngine("", silent), "runtime run")
+}
+
+func TestRunFailsWhenAFileDoesNotRoundTrip(t *testing.T) {
+	forgetful := answering([]string{"file get"}, func(string) []byte { return []byte(`{"contentBase64":"","exists":false}`) })
+	assertFailedSteps(t, newFakeEngine("", forgetful), "file round trip")
 }

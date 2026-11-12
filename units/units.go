@@ -34,6 +34,15 @@ func (c Control) Property(unit, property string) string {
 	return strings.TrimSpace(response.Stdout)
 }
 
+func (c Control) Properties(unit string, names ...string) ([]string, error) {
+	response, err := ctl.Send(c.Socket, ctl.Request{Verb: "show", Units: []string{unit}, Properties: names, Value: true})
+	if err != nil {
+		return nil, err
+	}
+
+	return strings.Split(strings.TrimSuffix(response.Stdout, "\n"), "\n"), nil
+}
+
 func (c Control) Run(transient ctl.Transient) error {
 	return c.send(ctl.Request{Verb: "run", Quiet: true, Transient: &transient})
 }

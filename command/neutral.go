@@ -51,6 +51,59 @@ func neutralHandlers(engine Engine, version string) map[string]handler {
 
 			return Encode(readLogs(layout.FromEnv(), request))
 		},
+		"runtime info": func(_ context.Context, input []byte) ([]byte, error) {
+			return Encode(runtimeInfo(engine, version, input))
+		},
+		"runtime run": func(ctx context.Context, input []byte) ([]byte, error) {
+			request, err := Decode[requests.RuntimeRun](input)
+			if err != nil {
+				return nil, err
+			}
+
+			return Encode(runScript(ctx, request))
+		},
+		"task start": func(_ context.Context, input []byte) ([]byte, error) {
+			request, err := Decode[requests.TaskStart](input)
+			if err != nil {
+				return nil, err
+			}
+
+			return Encode(operationsRuntime().startTask(request, input))
+		},
+		"task status": answering(func(request requests.TaskKey) (dtos.Operation, error) {
+			return operationsRuntime().taskStatus(request.Key)
+		}),
+		"task log": answering(func(request requests.TaskKey) (responses.TaskLog, error) {
+			if _, err := operationsRuntime().taskStatus(request.Key); err != nil {
+				return responses.TaskLog{}, err
+			}
+
+			return taskLog(layout.FromEnv().Home, request.Key)
+		}),
+		"task stop": answering(func(request requests.TaskKey) (dtos.Operation, error) {
+			return operationsRuntime().stopTask(request.Key)
+		}),
+		"file put": answering(func(request requests.FilePut) (dtos.Empty, error) {
+			return dtos.Empty{}, putFile(layout.FromEnv().Home, request)
+		}),
+		"file get": answering(func(request requests.FileGet) (responses.FileGet, error) {
+			return getFile(layout.FromEnv().Home, request)
+		}),
+		"service start": answering(func(request requests.ServiceUnits) (dtos.Empty, error) {
+			return controlServices(serviceRuntime(), "start", request.Units)
+		}),
+		"service stop": answering(func(request requests.ServiceUnits) (dtos.Empty, error) {
+			return controlServices(serviceRuntime(), "stop", request.Units)
+		}),
+		"service restart": answering(func(request requests.ServiceUnits) (dtos.Empty, error) {
+			return controlServices(serviceRuntime(), "restart", request.Units)
+		}),
+		"service reload": answering(func(dtos.Empty) (dtos.Empty, error) {
+			return reloadServices(serviceRuntime())
+		}),
+		"service status": answering(func(request requests.ServiceUnits) (responses.ServiceStatus, error) {
+			return serviceStatusOf(serviceRuntime(), request.Units)
+		}),
 		"operation cancel": func(_ context.Context, input []byte) ([]byte, error) {
 			request, err := Decode[requests.OperationCancel](input)
 			if err != nil {
@@ -130,4 +183,15 @@ func forwardLogs(destination *dtos.LogDestination) error {
 	}
 
 	return units.Control{Socket: paths.Socket()}.Do("daemon-reload")
+}
+
+func answering[Req, Rep any](method func(Req) (Rep, error)) handler {
+	return func(_ context.Context, input []byte) ([]byte, error) {
+		request, err := Decode[Req](input)
+		if err != nil {
+			return nil, err
+		}
+
+		return Encode(method(request))
+	}
 }
