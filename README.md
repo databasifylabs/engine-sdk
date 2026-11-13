@@ -30,16 +30,20 @@ ARG BASE_IMAGE
 FROM ghcr.io/databasifylabs/engine-sdk:1.0.0@sha256:<digest> AS sdk
 
 FROM ${BASE_IMAGE}
-ARG SDK_VERSION
+ARG SDK_VERSION RELEASE LINE
 COPY --from=sdk /databasify /usr/local/bin/databasify
 LABEL io.databasify.engine="example" \
       io.databasify.sdk="${SDK_VERSION}"
+ENV DATABASIFY_ENGINE=example \
+    DATABASIFY_RELEASE=${RELEASE} \
+    DATABASIFY_LINE=${LINE}
 ENTRYPOINT ["/usr/local/bin/databasify", "serve"]
 ```
 
-- **`io.databasify.engine`** names the engine. It is the container name (`databasify-<engine>`), the data root (`/srv/<engine>`) and `DATABASIFY_ENGINE`.
+- **`io.databasify.engine`** names the engine. `host deploy` reads it for the container name (`databasify-<engine>`) and the data root (`/srv/<engine>`).
+- **`DATABASIFY_ENGINE`, `DATABASIFY_RELEASE` and `DATABASIFY_LINE`** must be set with `ENV`; a label never sets an environment variable. The binary runs as the container runtime only when `DATABASIFY_ENGINE` is set, and `engine info` reports all three.
 - **`io.databasify.sdk`** is the SDK version. `tools/images.sh args` passes it as `SDK_VERSION`, from the `sdk` pin in `versions.json`.
-- **`conf/processes.json`** lists the processes the supervisor runs. Databasify writes it on every `node configure`.
+- **`conf/processes.json`** lists the processes and schedules the supervisor runs. Databasify's configure script writes it, then runs `databasify ctl daemon-reload`.
 
 A new engine starts from [engine-template](https://github.com/databasifylabs/engine-template).
 
@@ -72,7 +76,7 @@ A well-formed command the runtime does not serve, such as an engine command from
 - **`runtime run` limits:**
   - stdout and stderr are each capped at 1 MiB, and `truncated` says when output was cut;
   - a timeout kills the whole process group and replies with exit `124`.
-- **Tasks are operations with a caller-chosen key** (`^[a-z0-9][a-z0-9.-]{0,79}$`):
+- **Tasks are operations with a caller-chosen key** (`^[a-z0-9][a-z0-9.-]{0,79}$`). The saved request, `env` included, is cleared when the task finishes:
   - starting a key again returns the existing task instead of running it twice;
   - a non-zero exit fails the task with `script exited <code>: <last stderr line>`.
 - **File paths are relative to the engine home.** Absolute paths, `..`, and paths that leave the home through a symlink are refused with `invalid_request`. Writes are atomic.
@@ -87,7 +91,7 @@ echo '{"script":"psql -XAtc \"SELECT 1\"","env":{},"user":"postgres","timeoutSec
 
 Databasify installs the same binary on every server, copied from the SDK image. Outside a container it runs:
 
-- **`host deploy`:** runs the engine container from the database's pinned image digest, and applies the `hostProfile` in the request (sysctl settings, floors and transparent hugepages). The image is never asked for a profile.
+- **`host deploy`:** runs the engine container from the database's pinned image digest, and applies the `hostProfile` in the request (sysctl settings, floors and transparent hugepages). The image is never asked for a profile. Keys must be sysctl names (`vm.swappiness`) and values printable, or the deploy is refused before Docker is touched.
 - **`host remove`:** stops and removes the container. With `erase`, it also erases its data and puts back the host's original tuning.
 
 It forwards every other well-formed `<group> <verb>` into the engine container.
@@ -104,7 +108,8 @@ $IMAGES refresh <engine>-<line>
 ```
 
 - `$IMAGES` is `tools/images.sh` in a clone of this repository at `v<sdk>`, the tag the `sdk` pin names.
-- `check` refuses an `sdk` pin that is not a 1.x release.
+- `check` refuses an `sdk` pin that is not a 1.x release, and a Dockerfile whose `AS sdk` stage is not `ghcr.io/databasifylabs/engine-sdk:<sdk>@sha256:<digest>`.
+- The `go` pin in `versions.json` is optional; keep it only when an image builds a tool from Go source (`GO_IMAGE`).
 - With the `conformance` marker, `smoke` runs this repository's runtime conformance suite against the smoke container.
 
 ## Publishing Images
@@ -147,7 +152,7 @@ go test -race -count=1 ./...
 
 `conformance.Run(t, conformance.DockerRunner{Container: name})` runs the runtime conformance suite against a running engine container. It checks:
 - `engine info`;
-- `runtime run`, including that secrets passed in `env` never reach the process list;
+- `runtime run`, including that a secret passed in `env` is not echoed back in the reply;
 - a file round trip and a task;
 - that invalid input is refused and engine commands answer `unsupported`.
 

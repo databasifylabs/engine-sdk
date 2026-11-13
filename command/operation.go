@@ -128,6 +128,7 @@ func (o operations) finish(r record, err error) error {
 
 func (o operations) settle(r record, state enums.OperationState, failure error) (dtos.Operation, error) {
 	finished := now()
+	r.Request = nil
 	r.Operation.State = state
 	r.Operation.FinishedAt = &finished
 	if failure != nil {

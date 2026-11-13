@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,8 +109,8 @@ func TestCheckRefusesAPinOutsideItsLine(t *testing.T) {
 		"tag differs from release":  {"mysql-8.4", "8.4", "8.4.13", "8.4.14"},
 	}
 	for name, pin := range cases {
-		if out, err := run(t, engine, "", "--versions", versionsWith(t, pin[0], pin[1], pin[2], pin[3]), "check"); err == nil {
-			t.Errorf("%s was accepted: %s", name, out)
+		if out, err := run(t, engine, "", "--versions", versionsWith(t, pin[0], pin[1], pin[2], pin[3]), "check"); err == nil || !strings.Contains(out, "left line") && !strings.Contains(out, "the key must be") {
+			t.Errorf("%s was accepted (%v): %s", name, err, out)
 		}
 	}
 }
@@ -230,5 +231,36 @@ func TestHashFollowsTheDockerfile(t *testing.T) {
 
 	if after := mustRun(t, engine, "hash", "example-2"); after == before {
 		t.Fatalf("the hash ignores the Dockerfile: %s", after)
+	}
+}
+
+func TestCheckRefusesADockerfileOnAnotherSdk(t *testing.T) {
+	engine := fixtureEngine(t)
+	write(t, filepath.Join(engine, "images", "example", "Dockerfile"), "ARG BASE_IMAGE\nFROM ghcr.io/databasifylabs/engine-sdk:1.0.1@sha256:"+strings.Repeat("4", 64)+" AS sdk\nFROM ${BASE_IMAGE}\n")
+
+	if out, err := run(t, engine, "", "check"); err == nil || !strings.Contains(out, "engine-sdk:1.0.0@sha256") {
+		t.Fatalf("a Dockerfile on another SDK was accepted (%v): %s", err, out)
+	}
+}
+
+func TestArgsOmitTheGoImageWithoutAGoPin(t *testing.T) {
+	engine := fixtureEngine(t)
+	versions := filepath.Join(engine, "versions.json")
+	content, err := os.ReadFile(versions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pins map[string]any
+	if err := json.Unmarshal(content, &pins); err != nil {
+		t.Fatal(err)
+	}
+	delete(pins, "go")
+	withoutGo, _ := json.Marshal(pins)
+	write(t, versions, string(withoutGo))
+
+	out := mustRun(t, engine, "args", "example-2")
+
+	if strings.Contains(out, "GO_IMAGE") || !strings.Contains(out, "SDK_VERSION=1.0.0") {
+		t.Fatalf("args without a go pin: %s", out)
 	}
 }

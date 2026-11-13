@@ -54,7 +54,7 @@ cmd_args() {
         def ref: "\(.image):\(.tag)@\(.digest)";
         def argname: ascii_upcase | gsub("[^A-Z0-9]"; "_");
         .go as $go | .images[$key] as $image |
-        "GO_IMAGE=\($go | ref)",
+        ($go // empty | "GO_IMAGE=\(ref)"),
         "BASE_IMAGE=\($image.base | ref)",
         "RELEASE=\($image.release)",
         "LINE=\($image.line)",
@@ -310,9 +310,13 @@ cmd_newest() {
 }
 
 cmd_check() {
-    local key expected tag sdk failed=0
+    local key expected tag sdk engine failed=0
     sdk=$(jq -er .sdk "$versions")
     [[ $sdk =~ ^1\.[0-9]+\.[0-9]+$ ]] || { echo "the sdk pin $sdk is not a 1.x release" >&2; failed=1; }
+    for engine in $(jq -r '[.images[].engine] | unique[]' "$versions"); do
+        grep -Eq "^FROM ghcr\.io/databasifylabs/engine-sdk:${sdk//./\\.}@sha256:[0-9a-f]{64} AS sdk\$" "$root/images/$engine/Dockerfile" \
+            || { echo "images/$engine/Dockerfile must copy the runtime from ghcr.io/databasifylabs/engine-sdk:$sdk@sha256:<digest> AS sdk" >&2; failed=1; }
+    done
     for key in $(jq -r '.images | keys[]' "$versions"); do
         expected="$(engine_of "$key")-$(field "$key" .line)"
         tag=$(field "$key" .base.tag)
@@ -389,7 +393,9 @@ cmd_refresh() {
     done
     before=$(mktemp)
     cp "$versions" "$before"
-    refresh_pinned_image .go
+    if jq -e 'has("go")' "$versions" > /dev/null; then
+        refresh_pinned_image .go
+    fi
     for key in "$@"; do
         refresh_base "$key"
         refresh_copies "$key"

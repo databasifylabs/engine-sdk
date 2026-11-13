@@ -77,15 +77,6 @@ func TestEngineInfoReadsTheImageEnvironment(t *testing.T) {
 	}
 }
 
-func TestEngineInfoNamesTheImageEngine(t *testing.T) {
-	t.Setenv("DATABASIFY_ENGINE", "acme")
-	code, stdout := run(`{}`, "engine", "info")
-	var reply responses.EngineInfo
-	if err := json.Unmarshal([]byte(stdout), &reply); code != 0 || err != nil || reply.Engine != "acme" || reply.Sdk == "" {
-		t.Fatalf("code = %d, stdout = %q", code, stdout)
-	}
-}
-
 func TestIsWellFormed(t *testing.T) {
 	for argv, want := range map[string]bool{"runtime run": true, "task status": true, "widget frobnicate": true, "ctl status": true, "node": false, "node status extra": false, "Node status": false, "node status!": false, "node -status": false} {
 		if got := command.IsWellFormed(strings.Fields(argv)); got != want {

@@ -47,6 +47,9 @@ func RunHostCommand(args []string, stdin io.Reader, stdout io.Writer) int {
 }
 
 func deployAndSettle(docker Docker, srv string, system system, request requests.HostDeploy) (responses.HostDeploy, error) {
+	if err := checkProfile(request.HostProfile); err != nil {
+		return responses.HostDeploy{}, err
+	}
 	reply, err := deploy(docker, srv, request)
 	if err != nil {
 		return responses.HostDeploy{}, err
@@ -54,7 +57,7 @@ func deployAndSettle(docker Docker, srv string, system system, request requests.
 	if err := waitForEngine(docker, reply.Container); err != nil {
 		return responses.HostDeploy{}, err
 	}
-	_, err = tuneEngineIn(docker, system, reply.Container, request.HostProfile)
+	_, err = system.tune(reply.Engine, request.HostProfile)
 
 	return reply, err
 }

@@ -11,7 +11,7 @@ That left the Go engine contract, the typed engine commands and the engine helpe
 
 ## Decision
 
-- **One generic binary.** `cmd/databasify` is the supervisor, the runtime and the host binary in one. `sdk.Run()` takes no engine. The engine is `DATABASIFY_ENGINE`, set from the image's `io.databasify.engine` label.
+- **One generic binary.** `cmd/databasify` is the supervisor, the runtime and the host binary in one. `sdk.Run()` takes no engine. The engine is `DATABASIFY_ENGINE`, which each image sets with `ENV` next to its `io.databasify.engine` label; without it the binary acts as the host binary.
 - **No engine contract.** `contract/`, the command router and every engine command are gone, with the engine helpers only engines used (`settings`, `rclone`, `testtls`, `version` and the TLS writer). A well-formed command outside the runtime answers `unsupported`.
 - **The runtime is the whole interface:**
   - `engine info`;
@@ -21,11 +21,12 @@ That left the Go engine contract, the typed engine commands and the engine helpe
   - `logs read`;
   - the supervisor and the full systemctl-style `databasify ctl`, which scripts and jobs use to control units;
   - on the host, `host deploy` and `host remove`.
-- **The host profile comes in the request.** `host deploy` takes `hostProfile` and never asks the image for one. `host remove` with `erase` puts back the original tuning.
+- **The host profile comes in the request.** `host deploy` takes `hostProfile` and never asks the image for one. Keys must be sysctl names and values printable, checked before Docker is touched. The tuning file is named after the deployed engine, and `host remove` with `erase` puts back the original values, including those of keys added to a profile later.
 - **Only general building blocks.** Every command the app does not use, and that another one covers, is gone: `runtime info` (covered by `engine info`), `service *` (covered by `runtime run` with `databasify ctl`), `host tune`, `host restore`, and the `step`, `step-kill`, `info` and `version` entry points. Log forwarding is gone too. The supervisor and every `databasify ctl` verb stay, so a future feature is a script or a job in the app, never an SDK change.
 - **An engine image** is the official database image, its tools, and the binary copied from `ghcr.io/databasifylabs/engine-sdk` by digest. It has no Go code of its own. Its `versions.json` pins `sdk`, and `tools/images.sh` reads the pin from there.
 - **Versioning.** `1.0.0` is the last feature release. Later releases are patches: bug and security fixes, with no new commands or fields. A new engine or engine feature ships as a Databasify driver and Blade scripts.
 - **Conformance** checks the runtime only.
+- **Task secrets** live on disk only while a task runs; the saved request is cleared when it finishes.
 
 ## Consequences
 
@@ -46,8 +47,8 @@ That left the Go engine contract, the typed engine commands and the engine helpe
 - `command/command.go`
 - `command/neutral.go`
 - `host/commands.go`
-- `host/engine.go`
+- `host/tuning.go`
+- `command/operation.go`
 - `requests/host_deploy.go`
-- `requests/host_tune.go`
 - `conformance/suite.go`
 - `tools/images.sh`

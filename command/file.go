@@ -50,7 +50,11 @@ func writeStaging(root *os.Root, staging string, content []byte, request request
 		return err
 	}
 
-	return chownTo(file, request.Owner)
+	if err := chownTo(file, request.Owner); err != nil {
+		return err
+	}
+
+	return file.Sync()
 }
 
 func getFile(home string, request requests.FileGet) (responses.FileGet, error) {

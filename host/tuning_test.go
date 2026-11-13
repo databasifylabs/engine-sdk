@@ -1,7 +1,6 @@
 package host
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,29 +9,6 @@ import (
 
 	"github.com/databasifylabs/engine-sdk/responses"
 )
-
-const fakeImage = "ghcr.io/example/databasify-fake:1@sha256:" + "3333333333333333333333333333333333333333333333333333333333333333"
-
-type answeringEngine struct{}
-
-func (answeringEngine) Run(args ...string) (string, error) {
-	switch args[0] {
-	case "ps":
-		return "databasify-fake", nil
-	case "container":
-		return fakeImage, nil
-	}
-
-	return "", nil
-}
-
-func (answeringEngine) RunWithInput(_ string, args ...string) (string, error) {
-	if args[len(args)-1] == "info" {
-		return `{"engine":"fake","line":"1","version":"1.0","sdk":"1.0.0"}`, nil
-	}
-
-	return "", errors.New("the host asked the image for " + strings.Join(args, " "))
-}
 
 func refuseCommands(t *testing.T) func(string, ...string) error {
 	return func(name string, args ...string) error {
@@ -99,7 +75,7 @@ func TestAZeroProfileHasNoSettings(t *testing.T) {
 func TestHostTuneWithAZeroProfileChangesNothing(t *testing.T) {
 	root := t.TempDir()
 
-	tuned, err := tuneEngineIn(answeringEngine{}, system{root: root, run: refuseCommands(t)}, "databasify-fake", responses.EngineHostProfile{})
+	tuned, err := (system{root: root, run: refuseCommands(t)}).tune("fake", responses.EngineHostProfile{})
 
 	if err != nil || len(tuned.Settings) != 0 {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -123,7 +99,7 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	}
 	profile := responses.EngineHostProfile{Settings: map[string]string{"vm.overcommit_memory": "1"}, Floors: map[string]int64{"net.core.somaxconn": 1024}, DisableTransparentHugepages: true}
 
-	tuned, err := tuneEngineIn(answeringEngine{}, system{root: root, run: recordCommands(&calls)}, "databasify-fake", profile)
+	tuned, err := (system{root: root, run: recordCommands(&calls)}).tune("fake", profile)
 
 	if err != nil || tuned.Settings["net.core.somaxconn"] != "1024" || tuned.Settings["vm.overcommit_memory"] != "1" {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -146,14 +122,6 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	}
 }
 
-func TestHostTuneNeverAsksTheImageForAProfile(t *testing.T) {
-	_, err := tuneEngineIn(answeringEngine{}, system{root: t.TempDir(), run: refuseCommands(t)}, "databasify-fake", responses.EngineHostProfile{})
-
-	if err != nil {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestDockerErrorsCarryStderr(t *testing.T) {
 	bin := t.TempDir()
 	writeFile(t, filepath.Join(bin, "docker"), "#!/bin/sh\necho 'usage: databasify <command>' >&2\nexit 64\n")
@@ -172,5 +140,27 @@ func TestDockerErrorsCarryStderr(t *testing.T) {
 func TestHostCommandsAreRecognised(t *testing.T) {
 	if !IsHostCommand([]string{"host", "deploy"}) || !IsHostCommand([]string{"host", "remove"}) || IsHostCommand([]string{"host", "tune"}) || IsHostCommand([]string{"host", "restore"}) || IsHostCommand([]string{"node", "status"}) {
 		t.Fatal("host command detection is wrong")
+	}
+}
+
+func TestTuningRecordsTheOriginalOfAKeyAddedLater(t *testing.T) {
+	root, calls := t.TempDir(), []string{}
+	writeFile(t, filepath.Join(root, "proc/sys/vm/swappiness"), "60\n")
+	writeFile(t, filepath.Join(root, "proc/sys/net/core/somaxconn"), "128\n")
+	if err := os.MkdirAll(filepath.Join(root, "etc/sysctl.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	host := system{root: root, run: recordCommands(&calls)}
+	if _, err := host.tune("fake", responses.EngineHostProfile{Settings: map[string]string{"vm.swappiness": "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "proc/sys/vm/swappiness"), "1\n")
+
+	if _, err := host.tune("fake", responses.EngineHostProfile{Settings: map[string]string{"vm.swappiness": "1", "net.core.somaxconn": "4096"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readFile(t, filepath.Join(root, "etc/databasify/sysctl-originals/fake")); got != "net.core.somaxconn = 128\nvm.swappiness = 60\n" {
+		t.Errorf("originals = %q", got)
 	}
 }

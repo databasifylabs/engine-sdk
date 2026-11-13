@@ -30,6 +30,5 @@
 - `contract/engine.go`
 - `command/neutral.go`
 - `responses/engine_host_profile.go`
-- `host/engine.go`
 - `host/tuning.go`
 - `host/deploy.go`

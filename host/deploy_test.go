@@ -11,6 +11,7 @@ import (
 	"github.com/databasifylabs/engine-sdk/command"
 	"github.com/databasifylabs/engine-sdk/enums"
 	"github.com/databasifylabs/engine-sdk/requests"
+	"github.com/databasifylabs/engine-sdk/responses"
 )
 
 const (
@@ -256,5 +257,59 @@ func TestDeployLeavesTheHostBinaryAlone(t *testing.T) {
 
 	if containsCall(calls, "cp databasify-postgres:/usr/local/bin/databasify") {
 		t.Errorf("the host binary was copied out of the container: %v", calls)
+	}
+}
+
+func TestDeployRefusesAnUnsafeHostProfileBeforeTouchingDocker(t *testing.T) {
+	cases := map[string]responses.EngineHostProfile{
+		"path in a setting key": {Settings: map[string]string{"../../etc/shadow": "1"}},
+		"key without a dot":     {Settings: map[string]string{"swappiness": "1"}},
+		"newline in a value":    {Settings: map[string]string{"vm.swappiness": "1\nkernel.panic = 1"}},
+		"empty value":           {Settings: map[string]string{"vm.swappiness": ""}},
+		"path in a floor key":   {Floors: map[string]int64{"net/core/../../../etc/passwd": 1}},
+	}
+	for name, profile := range cases {
+		calls := []string{}
+		request := deployRequest()
+		request.HostProfile = profile
+
+		_, err := deployAndSettle(fakeDocker{calls: &calls, engine: "postgres"}, t.TempDir(), system{root: t.TempDir(), run: refuseCommands(t)}, request)
+
+		var failure command.Failure
+		if !errors.As(err, &failure) || failure.Code != enums.ErrorCodeInvalidRequest {
+			t.Errorf("%s: err = %v", name, err)
+		}
+		if len(calls) != 0 {
+			t.Errorf("%s: docker was called: %v", name, calls)
+		}
+	}
+}
+
+func TestDeployAcceptsARealHostProfile(t *testing.T) {
+	profile := responses.EngineHostProfile{Settings: map[string]string{"vm.swappiness": "1", "net.ipv4.tcp_keepalive_time": "60", "kernel.sched_autogroup_enabled": "0"}, Floors: map[string]int64{"net.core.somaxconn": 4096, "vm.max_map_count": 262144}}
+
+	if err := checkProfile(profile); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDeployTunesUnderTheDeployedEngineName(t *testing.T) {
+	calls, commands, root := []string{}, []string{}, t.TempDir()
+	writeFile(t, filepath.Join(root, "proc/sys/vm/swappiness"), "60\n")
+	if err := os.MkdirAll(filepath.Join(root, "etc/sysctl.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	request := deployRequest()
+	request.HostProfile = responses.EngineHostProfile{Settings: map[string]string{"vm.swappiness": "1"}}
+
+	if _, err := deployAndSettle(fakeDocker{calls: &calls, engine: "postgres"}, t.TempDir(), system{root: root, run: recordCommands(&commands)}, request); err != nil {
+		t.Fatal(err)
+	}
+
+	if readFile(t, filepath.Join(root, "etc/sysctl.d/99-postgres.conf")) != "vm.swappiness = 1\n" {
+		t.Error("the tuning file is not named after the deployed engine")
+	}
+	if containsCall(calls, "exec --interactive databasify-postgres databasify engine info") {
+		t.Errorf("deploy asked the container for its engine: %v", calls)
 	}
 }
