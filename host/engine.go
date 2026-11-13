@@ -4,19 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/databasifylabs/engine-sdk/command"
 	"github.com/databasifylabs/engine-sdk/responses"
 	"github.com/databasifylabs/engine-sdk/support"
 )
-
-func runningEngine(docker Docker) (string, error) {
-	container, err := engineContainer(docker)
-	if err != nil {
-		return "", command.Unavailable(err.Error())
-	}
-
-	return container, nil
-}
 
 func ask[T any](docker Docker, container string, group string, verb string) (T, error) {
 	output, err := docker.RunWithInput("{}", "exec", "--interactive", container, "databasify", group, verb)
@@ -44,15 +34,6 @@ func engineNameIn(docker Docker, container string) (string, error) {
 	return info.Engine, err
 }
 
-func tuneHost(docker Docker, system system, profile responses.EngineHostProfile) (responses.HostTune, error) {
-	container, err := runningEngine(docker)
-	if err != nil {
-		return responses.HostTune{}, err
-	}
-
-	return tuneEngineIn(docker, system, container, profile)
-}
-
 func tuneEngineIn(docker Docker, system system, container string, profile responses.EngineHostProfile) (responses.HostTune, error) {
 	engine, err := engineNameIn(docker, container)
 	if err != nil {
@@ -60,17 +41,4 @@ func tuneEngineIn(docker Docker, system system, container string, profile respon
 	}
 
 	return system.tune(engine, profile)
-}
-
-func restoreHost(docker Docker, system system) error {
-	container, err := runningEngine(docker)
-	if err != nil {
-		return err
-	}
-	engine, err := engineNameIn(docker, container)
-	if err != nil {
-		return err
-	}
-
-	return system.restore(engine)
 }

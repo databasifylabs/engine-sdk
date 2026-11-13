@@ -193,10 +193,10 @@ cmd_smoke() {
     local engine=$2 checks="$root/images/$2/smoke" info code
     smoke_image=$1
     smoke_container="databasify-smoke-$engine-$$"
-    echo "--- databasify info"
-    info=$(docker run --rm --entrypoint databasify "$smoke_image" info)
+    echo "--- engine info"
+    info=$(docker run --rm --interactive --entrypoint databasify "$smoke_image" engine info <<< '{}')
     echo "$info"
-    grep -qx "engine=$engine" <<< "$info"
+    jq -e --arg engine "$engine" '.engine == $engine' <<< "$info" > /dev/null
     echo "--- tool contract"
     docker run --rm --entrypoint bash "$smoke_image" -c '
         for tool in bash ps ss ip jq openssl curl; do
@@ -211,7 +211,7 @@ cmd_smoke() {
     cp "$checks/processes.json" "$smoke_work/conf/processes.json"
     [ ! -f "$checks/postgresql.conf" ] || cp "$checks/postgresql.conf" "$smoke_work/conf/postgresql.conf"
     docker run -d --name "$smoke_container" --volume "$smoke_work:/srv/$engine" "$smoke_image" > /dev/null
-    if ! docker exec -i "$smoke_container" databasify step smoke < "$checks/check.sh"; then
+    if ! docker exec -i "$smoke_container" bash -euo pipefail -s < "$checks/check.sh"; then
         docker logs "$smoke_container" 2>&1 | tail -50
         exit 1
     fi

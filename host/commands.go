@@ -15,21 +15,6 @@ const engineWait = 60 * time.Second
 type hostHandler func(input []byte) ([]byte, error)
 
 var hostCommands = map[string]hostHandler{
-	"tune": func(input []byte) ([]byte, error) {
-		request, err := command.Decode[requests.HostTune](input)
-		if err != nil {
-			return nil, err
-		}
-
-		return command.Encode(tuneHost(execDocker{}, hostSystem, request.HostProfile))
-	},
-	"restore": func(input []byte) ([]byte, error) {
-		if _, err := command.Decode[dtos.Empty](input); err != nil {
-			return nil, err
-		}
-
-		return command.Encode(dtos.Empty{}, restoreHost(execDocker{}, hostSystem))
-	},
 	"deploy": func(input []byte) ([]byte, error) {
 		request, err := command.Decode[requests.HostDeploy](input)
 		if err != nil {

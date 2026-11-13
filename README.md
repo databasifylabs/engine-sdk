@@ -60,17 +60,13 @@ A well-formed command the runtime does not serve, such as an engine command from
 | Command | Request | Reply |
 |---|---|---|
 | `engine info` | `{}` | `engine`, `line`, `version`, `sdk` |
-| `runtime info` | `{}` | `protocol` (`1`), `engine`, `sdk` |
 | `runtime run` | `script`, `env`, `user`, `timeoutSeconds` (1–3600) | `exit`, `stdout`, `stderr`, `truncated` |
 | `task start` | `key`, `script`, `env`, `user` | the task's operation |
 | `task status`, `task stop` | `key` | the task's operation |
 | `task log` | `key` | the last 50 `lines` of the task's log |
 | `file put` | `path`, `contentBase64`, `mode`, `owner` | `{}` |
 | `file get` | `path` | `contentBase64`, `exists` |
-| `service start`, `stop`, `restart`, `status` | `units` | `{}`, or each unit's `activeState`, `subState` and `result` |
-| `service reload` | `{}` | `{}`, after re-reading `conf/processes.json` |
 | `logs read` | `unit`, `lines` (1–10000) | the last log lines |
-| `logs forward` | `destination` | `{}` |
 
 - **Scripts run as `bash -euo pipefail -s`, with the script on stdin and never in argv.** Passwords inside a script never show up in `ps`.
 - **`runtime run` limits:**
@@ -80,7 +76,7 @@ A well-formed command the runtime does not serve, such as an engine command from
   - starting a key again returns the existing task instead of running it twice;
   - a non-zero exit fails the task with `script exited <code>: <last stderr line>`.
 - **File paths are relative to the engine home.** Absolute paths, `..`, and paths that leave the home through a symlink are refused with `invalid_request`. Writes are atomic.
-- **Inside the container, scripts control units with `databasify ctl`.**
+- **Inside the container, scripts control units with `databasify ctl`**, the systemctl-style CLI: `start`, `stop`, `restart`, `reload`, `enable`, `disable`, `kill`, `show`, `status`, `is-active`, `is-failed`, `reset-failed`, `daemon-reload`, `run` and `run-schedule`.
 
 ```bash
 echo '{"script":"psql -XAtc \"SELECT 1\"","env":{},"user":"postgres","timeoutSeconds":30}' | databasify runtime run
@@ -92,9 +88,7 @@ echo '{"script":"psql -XAtc \"SELECT 1\"","env":{},"user":"postgres","timeoutSec
 Databasify installs the same binary on every server, copied from the SDK image. Outside a container it runs:
 
 - **`host deploy`:** runs the engine container from the database's pinned image digest, and applies the `hostProfile` in the request (sysctl settings, floors and transparent hugepages). The image is never asked for a profile.
-- **`host remove`:** stops and removes the container, and erases its data when asked.
-- **`host tune`:** applies a `hostProfile` again.
-- **`host restore`:** restores the container's data root.
+- **`host remove`:** stops and removes the container. With `erase`, it also erases its data and puts back the host's original tuning.
 
 It forwards every other well-formed `<group> <verb>` into the engine container.
 
@@ -139,6 +133,7 @@ jobs:
 
 `1.0` is the final runtime ([ADR 0009](docs/adr/0009-engine-sdk-1-0-is-a-frozen-runtime.md)).
 - After `1.0.0`, releases are patches only: bug and security fixes, with no new commands or fields.
+- The runtime keeps only general building blocks (scripts, tasks, files, logs, the supervisor and `databasify ctl`), so a new feature is a script or a job in the app.
 - A new engine or engine feature never changes the SDK. It ships as a Databasify driver and Blade scripts.
 
 Every image carries the SDK version in its `io.databasify.sdk` label, and `engine info` reports it. Databasify 0.2 accepts `^0.2.2 || ^1.0`.
@@ -151,7 +146,7 @@ go test -race -count=1 ./...
 ```
 
 `conformance.Run(t, conformance.DockerRunner{Container: name})` runs the runtime conformance suite against a running engine container. It checks:
-- `engine info` and `runtime info`;
+- `engine info`;
 - `runtime run`, including that secrets passed in `env` never reach the process list;
 - a file round trip and a task;
 - that invalid input is refused and engine commands answer `unsupported`.

@@ -2,15 +2,12 @@ package command
 
 import (
 	"context"
-	"errors"
 	"os"
 
 	"github.com/databasifylabs/engine-sdk/dtos"
 	"github.com/databasifylabs/engine-sdk/layout"
-	"github.com/databasifylabs/engine-sdk/logship"
 	"github.com/databasifylabs/engine-sdk/requests"
 	"github.com/databasifylabs/engine-sdk/responses"
-	"github.com/databasifylabs/engine-sdk/units"
 )
 
 type handler func(ctx context.Context, input []byte) ([]byte, error)
@@ -20,14 +17,6 @@ func neutralHandlers(version string) map[string]handler {
 		"engine info": func(_ context.Context, input []byte) ([]byte, error) {
 			return Encode(engineInfo(version, input))
 		},
-		"logs forward": func(_ context.Context, input []byte) ([]byte, error) {
-			request, err := Decode[requests.LogsForward](input)
-			if err != nil {
-				return nil, err
-			}
-
-			return Encode(dtos.Empty{}, forwardLogs(request.Destination))
-		},
 		"logs read": func(_ context.Context, input []byte) ([]byte, error) {
 			request, err := Decode[requests.LogsRead](input)
 			if err != nil {
@@ -35,9 +24,6 @@ func neutralHandlers(version string) map[string]handler {
 			}
 
 			return Encode(readLogs(layout.FromEnv(), request))
-		},
-		"runtime info": func(_ context.Context, input []byte) ([]byte, error) {
-			return Encode(runtimeInfo(version, input))
 		},
 		"runtime run": func(ctx context.Context, input []byte) ([]byte, error) {
 			request, err := Decode[requests.RuntimeRun](input)
@@ -74,21 +60,6 @@ func neutralHandlers(version string) map[string]handler {
 		"file get": answering(func(request requests.FileGet) (responses.FileGet, error) {
 			return getFile(layout.FromEnv().Home, request)
 		}),
-		"service start": answering(func(request requests.ServiceUnits) (dtos.Empty, error) {
-			return controlServices(serviceRuntime(), "start", request.Units)
-		}),
-		"service stop": answering(func(request requests.ServiceUnits) (dtos.Empty, error) {
-			return controlServices(serviceRuntime(), "stop", request.Units)
-		}),
-		"service restart": answering(func(request requests.ServiceUnits) (dtos.Empty, error) {
-			return controlServices(serviceRuntime(), "restart", request.Units)
-		}),
-		"service reload": answering(func(dtos.Empty) (dtos.Empty, error) {
-			return reloadServices(serviceRuntime())
-		}),
-		"service status": answering(func(request requests.ServiceUnits) (responses.ServiceStatus, error) {
-			return serviceStatusOf(serviceRuntime(), request.Units)
-		}),
 	}
 }
 
@@ -103,19 +74,6 @@ func engineInfo(version string, input []byte) (responses.EngineInfo, error) {
 		Version: os.Getenv("DATABASIFY_RELEASE"),
 		Sdk:     version,
 	}, nil
-}
-
-func forwardLogs(destination *dtos.LogDestination) error {
-	paths := layout.FromEnv()
-	if err := logship.Save(paths.Home, destination); err != nil {
-		if errors.Is(err, logship.ErrScheme) {
-			return Invalid(err.Error())
-		}
-
-		return err
-	}
-
-	return units.Control{Socket: paths.Socket()}.Do("daemon-reload")
 }
 
 func answering[Req, Rep any](method func(Req) (Rep, error)) handler {

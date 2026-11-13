@@ -99,7 +99,7 @@ func TestAZeroProfileHasNoSettings(t *testing.T) {
 func TestHostTuneWithAZeroProfileChangesNothing(t *testing.T) {
 	root := t.TempDir()
 
-	tuned, err := tuneHost(answeringEngine{}, system{root: root, run: refuseCommands(t)}, responses.EngineHostProfile{})
+	tuned, err := tuneEngineIn(answeringEngine{}, system{root: root, run: refuseCommands(t)}, "databasify-fake", responses.EngineHostProfile{})
 
 	if err != nil || len(tuned.Settings) != 0 {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -123,7 +123,7 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	}
 	profile := responses.EngineHostProfile{Settings: map[string]string{"vm.overcommit_memory": "1"}, Floors: map[string]int64{"net.core.somaxconn": 1024}, DisableTransparentHugepages: true}
 
-	tuned, err := tuneHost(answeringEngine{}, system{root: root, run: recordCommands(&calls)}, profile)
+	tuned, err := tuneEngineIn(answeringEngine{}, system{root: root, run: recordCommands(&calls)}, "databasify-fake", profile)
 
 	if err != nil || tuned.Settings["net.core.somaxconn"] != "1024" || tuned.Settings["vm.overcommit_memory"] != "1" {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -147,7 +147,7 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 }
 
 func TestHostTuneNeverAsksTheImageForAProfile(t *testing.T) {
-	_, err := tuneHost(answeringEngine{}, system{root: t.TempDir(), run: refuseCommands(t)}, responses.EngineHostProfile{})
+	_, err := tuneEngineIn(answeringEngine{}, system{root: t.TempDir(), run: refuseCommands(t)}, "databasify-fake", responses.EngineHostProfile{})
 
 	if err != nil {
 		t.Fatalf("err = %v", err)
@@ -170,7 +170,7 @@ func TestDockerErrorsCarryStderr(t *testing.T) {
 }
 
 func TestHostCommandsAreRecognised(t *testing.T) {
-	if !IsHostCommand([]string{"host", "tune"}) || !IsHostCommand([]string{"host", "restore"}) || IsHostCommand([]string{"node", "status"}) {
+	if !IsHostCommand([]string{"host", "deploy"}) || !IsHostCommand([]string{"host", "remove"}) || IsHostCommand([]string{"host", "tune"}) || IsHostCommand([]string{"host", "restore"}) || IsHostCommand([]string{"node", "status"}) {
 		t.Fatal("host command detection is wrong")
 	}
 }

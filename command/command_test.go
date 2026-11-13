@@ -77,11 +77,11 @@ func TestEngineInfoReadsTheImageEnvironment(t *testing.T) {
 	}
 }
 
-func TestRuntimeInfoNamesTheImageEngine(t *testing.T) {
+func TestEngineInfoNamesTheImageEngine(t *testing.T) {
 	t.Setenv("DATABASIFY_ENGINE", "acme")
-	code, stdout := run(`{}`, "runtime", "info")
-	var reply responses.RuntimeInfo
-	if err := json.Unmarshal([]byte(stdout), &reply); code != 0 || err != nil || reply.Engine != "acme" || reply.Protocol != command.RuntimeProtocol {
+	code, stdout := run(`{}`, "engine", "info")
+	var reply responses.EngineInfo
+	if err := json.Unmarshal([]byte(stdout), &reply); code != 0 || err != nil || reply.Engine != "acme" || reply.Sdk == "" {
 		t.Fatalf("code = %d, stdout = %q", code, stdout)
 	}
 }
@@ -95,7 +95,7 @@ func TestIsWellFormed(t *testing.T) {
 }
 
 func TestEngineCommandsAreUnsupported(t *testing.T) {
-	for _, argv := range []string{"node status", "user create", "engine capabilities", "engine host-profile", "operation status"} {
+	for _, argv := range []string{"node status", "user create", "engine capabilities", "engine host-profile", "operation status", "runtime info", "logs forward", "service start", "service status"} {
 		code, stdout := run(`{}`, strings.Fields(argv)...)
 		if code != 1 || errorCode(t, stdout) != "unsupported" {
 			t.Errorf("%s: code = %d, stdout = %s", argv, code, stdout)

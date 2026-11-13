@@ -24,6 +24,10 @@ func TestDecodeStrictAcceptsAValidRequest(t *testing.T) {
 	}
 }
 
+type unitList struct {
+	Units []string `json:"units" pattern:"^[a-z-]+$"`
+}
+
 func TestDecodeStrictRejectsInvalidRequests(t *testing.T) {
 	cases := map[string]error{
 		"unknown field":     decodeError[requests.TaskKey](`{"key":"k1","extra":1}`),
@@ -33,7 +37,7 @@ func TestDecodeStrictRejectsInvalidRequests(t *testing.T) {
 		"pattern":           decodeError[requests.TaskKey](`{"key":"a b'; --"}`),
 		"too long":          decodeError[requests.FileGet](`{"path":"` + strings.Repeat("a", 256) + `"}`),
 		"empty script":      decodeError[requests.RuntimeRun](`{"script":"","env":{},"user":null,"timeoutSeconds":10}`),
-		"list item pattern": decodeError[requests.ServiceUnits](`{"units":["bad unit!"]}`),
+		"list item pattern": decodeError[unitList](`{"units":["bad unit!"]}`),
 		"maximum":           decodeError[requests.RuntimeRun](`{"script":"true","env":{},"user":null,"timeoutSeconds":99999}`),
 		"negative minimum":  decodeError[dtos.Progress](`{"done":-5,"total":null,"unit":"bytes"}`),
 		"not an object":     decodeError[requests.TaskKey](`[]`),
@@ -54,7 +58,7 @@ func TestDecodeStrictAllowsAbsentOrNullOptionalFields(t *testing.T) {
 }
 
 func TestEncodeWritesEmptyListsAndMaps(t *testing.T) {
-	encoded, err := Encode(responses.ServiceStatus{})
+	encoded, err := Encode(responses.LogsRead{})
 	if err != nil || strings.Contains(string(encoded), "null") {
 		t.Fatalf("encoded = %s, err = %v", encoded, err)
 	}

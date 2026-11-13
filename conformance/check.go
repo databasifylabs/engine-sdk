@@ -32,11 +32,9 @@ func as[T any]() decoder {
 }
 
 var replies = map[string]decoder{
-	"engine info": as[responses.EngineInfo](), "logs forward": as[dtos.Empty](), "logs read": as[responses.LogsRead](),
-	"runtime info": as[responses.RuntimeInfo](), "runtime run": as[responses.RuntimeRun](),
+	"engine info": as[responses.EngineInfo](), "logs read": as[responses.LogsRead](), "runtime run": as[responses.RuntimeRun](),
 	"task start": as[dtos.Operation](), "task status": as[dtos.Operation](), "task log": as[responses.TaskLog](), "task stop": as[dtos.Operation](),
 	"file put": as[dtos.Empty](), "file get": as[responses.FileGet](),
-	"service start": as[dtos.Empty](), "service stop": as[dtos.Empty](), "service restart": as[dtos.Empty](), "service reload": as[dtos.Empty](), "service status": as[responses.ServiceStatus](),
 }
 
 func validate(decode decoder, stdout []byte) error {

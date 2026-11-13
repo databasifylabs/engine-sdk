@@ -54,7 +54,3 @@ func (l Layout) EnabledState() string {
 func (l Layout) Socket() string {
 	return filepath.Join(l.Run, "databasify.sock")
 }
-
-func (l Layout) Tasks() string {
-	return filepath.Join(l.Run, "databasify", "tasks")
-}

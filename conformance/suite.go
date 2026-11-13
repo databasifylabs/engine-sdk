@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	runtimeProtocol = 1
 	conformanceFile = "state/conformance-check"
 	commandTimeout  = 60 * time.Second
 	taskWait        = 30 * time.Second
@@ -75,7 +74,6 @@ func randomHex(size int) string {
 func (l *lifecycle) steps() []step {
 	return []step{
 		{"engine info", l.checkEngineInfo},
-		{"runtime info", l.checkRuntimeInfo},
 		{"runtime run", l.checkRuntimeRun},
 		{"runtime run keeps env secrets out of the reply", l.checkSecretInEnv},
 		{"file round trip", l.checkFileRoundTrip},
@@ -170,18 +168,6 @@ func (l *lifecycle) checkEngineInfo() error {
 	}
 	if reply.Engine == "" || reply.Sdk == "" {
 		return fmt.Errorf("engine info reports engine %q and sdk %q, want both", reply.Engine, reply.Sdk)
-	}
-
-	return nil
-}
-
-func (l *lifecycle) checkRuntimeInfo() error {
-	reply, err := callReply[responses.RuntimeInfo](l, "runtime info", dtos.Empty{})
-	if err != nil {
-		return err
-	}
-	if reply.Protocol != runtimeProtocol {
-		return fmt.Errorf("runtime info reports protocol %d, want %d", reply.Protocol, runtimeProtocol)
 	}
 
 	return nil

@@ -14,14 +14,15 @@ That left the Go engine contract, the typed engine commands and the engine helpe
 - **One generic binary.** `cmd/databasify` is the supervisor, the runtime and the host binary in one. `sdk.Run()` takes no engine. The engine is `DATABASIFY_ENGINE`, set from the image's `io.databasify.engine` label.
 - **No engine contract.** `contract/`, the command router and every engine command are gone, with the engine helpers only engines used (`settings`, `rclone`, `testtls`, `version` and the TLS writer). A well-formed command outside the runtime answers `unsupported`.
 - **The runtime is the whole interface:**
-  - `engine info` and `runtime info`;
+  - `engine info`;
   - `runtime run`;
   - `task start`, `status`, `log` and `stop`;
   - `file get` and `put`;
-  - `service start`, `stop`, `restart`, `status` and `reload`;
-  - `logs read` and `forward`;
-  - on the host, `host deploy`, `remove`, `tune` and `restore`.
-- **The host profile comes in the request.** `host deploy` and `host tune` take `hostProfile` and never ask the image for one.
+  - `logs read`;
+  - the supervisor and the full systemctl-style `databasify ctl`, which scripts and jobs use to control units;
+  - on the host, `host deploy` and `host remove`.
+- **The host profile comes in the request.** `host deploy` takes `hostProfile` and never asks the image for one. `host remove` with `erase` puts back the original tuning.
+- **Only general building blocks.** Every command the app does not use, and that another one covers, is gone: `runtime info` (covered by `engine info`), `service *` (covered by `runtime run` with `databasify ctl`), `host tune`, `host restore`, and the `step`, `step-kill`, `info` and `version` entry points. Log forwarding is gone too. The supervisor and every `databasify ctl` verb stay, so a future feature is a script or a job in the app, never an SDK change.
 - **An engine image** is the official database image, its tools, and the binary copied from `ghcr.io/databasifylabs/engine-sdk` by digest. It has no Go code of its own. Its `versions.json` pins `sdk`, and `tools/images.sh` reads the pin from there.
 - **Versioning.** `1.0.0` is the last feature release. Later releases are patches: bug and security fixes, with no new commands or fields. A new engine or engine feature ships as a Databasify driver and Blade scripts.
 - **Conformance** checks the runtime only.

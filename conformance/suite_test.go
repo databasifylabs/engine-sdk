@@ -52,8 +52,6 @@ func (f *fakeRuntime) answer(command string, stdin []byte) ([]byte, int) {
 	switch command {
 	case "engine info":
 		return []byte(`{"engine":"fake","line":"1","version":"1.0","sdk":"1.0.0"}`), 0
-	case "runtime info":
-		return []byte(`{"protocol":1,"engine":"fake","sdk":"1.0.0"}`), 0
 	case "runtime run":
 		return []byte(`{"exit":0,"stdout":"ok\n","stderr":"","truncated":false}`), 0
 	case "file put":
@@ -116,11 +114,6 @@ func TestRunFailsOnNonJSONOutput(t *testing.T) {
 		return []byte("panic: boom"), 0, command == "engine info"
 	})
 	assertFailedSteps(t, broken, "engine info")
-}
-
-func TestRunFailsOnAWrongRuntimeProtocol(t *testing.T) {
-	future := answering([]string{"runtime info"}, func(string) []byte { return []byte(`{"protocol":2,"engine":"fake","sdk":"1.0.0"}`) })
-	assertFailedSteps(t, newFakeRuntime(future), "runtime info")
 }
 
 func TestRunFailsWhenRuntimeRunLosesOutput(t *testing.T) {
