@@ -1,7 +1,6 @@
 package host
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,34 +9,6 @@ import (
 
 	"github.com/databasifylabs/engine-sdk/responses"
 )
-
-const zeroProfile = `{"settings":{},"floors":{},"disableTransparentHugepages":false}`
-
-const fakeImage = "ghcr.io/example/databasify-fake:1@sha256:" + "3333333333333333333333333333333333333333333333333333333333333333"
-
-type answeringEngine struct {
-	profile    string
-	profileErr error
-}
-
-func (answeringEngine) Run(args ...string) (string, error) {
-	switch args[0] {
-	case "ps":
-		return "databasify-fake", nil
-	case "container":
-		return fakeImage, nil
-	}
-
-	return "", nil
-}
-
-func (e answeringEngine) RunWithInput(_ string, args ...string) (string, error) {
-	if args[len(args)-1] == "info" {
-		return `{"engine":"fake","line":"1","version":"1.0","sdk":"0.2.0"}`, nil
-	}
-
-	return e.profile, e.profileErr
-}
 
 func refuseCommands(t *testing.T) func(string, ...string) error {
 	return func(name string, args ...string) error {
@@ -104,7 +75,7 @@ func TestAZeroProfileHasNoSettings(t *testing.T) {
 func TestHostTuneWithAZeroProfileChangesNothing(t *testing.T) {
 	root := t.TempDir()
 
-	tuned, err := tuneHost(answeringEngine{profile: zeroProfile}, system{root: root, run: refuseCommands(t)})
+	tuned, err := (system{root: root, run: refuseCommands(t)}).tune("fake", responses.EngineHostProfile{})
 
 	if err != nil || len(tuned.Settings) != 0 {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -126,9 +97,9 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "etc/systemd/system"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	profile := `{"settings":{"vm.overcommit_memory":"1"},"floors":{"net.core.somaxconn":1024},"disableTransparentHugepages":true}`
+	profile := responses.EngineHostProfile{Settings: map[string]string{"vm.overcommit_memory": "1"}, Floors: map[string]int64{"net.core.somaxconn": 1024}, DisableTransparentHugepages: true}
 
-	tuned, err := tuneHost(answeringEngine{profile: profile}, system{root: root, run: recordCommands(&calls)})
+	tuned, err := (system{root: root, run: recordCommands(&calls)}).tune("fake", profile)
 
 	if err != nil || tuned.Settings["net.core.somaxconn"] != "1024" || tuned.Settings["vm.overcommit_memory"] != "1" {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -151,16 +122,6 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	}
 }
 
-func TestHostTuneNamesTheImageThatDoesNotAnswerTheProfile(t *testing.T) {
-	engine := answeringEngine{profileErr: errors.New("docker exec: exit status 64: usage: databasify <command>")}
-
-	_, err := tuneHost(engine, system{root: t.TempDir(), run: refuseCommands(t)})
-
-	if err == nil || !strings.Contains(err.Error(), fakeImage) || !strings.Contains(err.Error(), "does not answer engine host-profile") || !strings.Contains(err.Error(), "usage: databasify") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 func TestDockerErrorsCarryStderr(t *testing.T) {
 	bin := t.TempDir()
 	writeFile(t, filepath.Join(bin, "docker"), "#!/bin/sh\necho 'usage: databasify <command>' >&2\nexit 64\n")
@@ -177,7 +138,29 @@ func TestDockerErrorsCarryStderr(t *testing.T) {
 }
 
 func TestHostCommandsAreRecognised(t *testing.T) {
-	if !IsHostCommand([]string{"host", "tune"}) || !IsHostCommand([]string{"host", "restore"}) || IsHostCommand([]string{"node", "status"}) {
+	if !IsHostCommand([]string{"host", "deploy"}) || !IsHostCommand([]string{"host", "remove"}) || IsHostCommand([]string{"host", "tune"}) || IsHostCommand([]string{"host", "restore"}) || IsHostCommand([]string{"node", "status"}) {
 		t.Fatal("host command detection is wrong")
+	}
+}
+
+func TestTuningRecordsTheOriginalOfAKeyAddedLater(t *testing.T) {
+	root, calls := t.TempDir(), []string{}
+	writeFile(t, filepath.Join(root, "proc/sys/vm/swappiness"), "60\n")
+	writeFile(t, filepath.Join(root, "proc/sys/net/core/somaxconn"), "128\n")
+	if err := os.MkdirAll(filepath.Join(root, "etc/sysctl.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	host := system{root: root, run: recordCommands(&calls)}
+	if _, err := host.tune("fake", responses.EngineHostProfile{Settings: map[string]string{"vm.swappiness": "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "proc/sys/vm/swappiness"), "1\n")
+
+	if _, err := host.tune("fake", responses.EngineHostProfile{Settings: map[string]string{"vm.swappiness": "1", "net.core.somaxconn": "4096"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readFile(t, filepath.Join(root, "etc/databasify/sysctl-originals/fake")); got != "net.core.somaxconn = 128\nvm.swappiness = 60\n" {
+		t.Errorf("originals = %q", got)
 	}
 }

@@ -1,11 +1,5 @@
 package responses
 
-type RuntimeInfo struct {
-	Protocol int64  `json:"protocol"`
-	Engine   string `json:"engine"`
-	Sdk      string `json:"sdk"`
-}
-
 type RuntimeRun struct {
 	Exit      int64  `json:"exit"`
 	Stdout    string `json:"stdout"`
@@ -20,15 +14,4 @@ type TaskLog struct {
 type FileGet struct {
 	ContentBase64 string `json:"contentBase64"`
 	Exists        bool   `json:"exists"`
-}
-
-type ServiceStatus struct {
-	Units []ServiceUnit `json:"units"`
-}
-
-type ServiceUnit struct {
-	Name        string `json:"name"`
-	ActiveState string `json:"activeState"`
-	SubState    string `json:"subState"`
-	Result      string `json:"result"`
 }

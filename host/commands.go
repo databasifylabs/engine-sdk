@@ -15,20 +15,6 @@ const engineWait = 60 * time.Second
 type hostHandler func(input []byte) ([]byte, error)
 
 var hostCommands = map[string]hostHandler{
-	"tune": func(input []byte) ([]byte, error) {
-		if _, err := command.Decode[dtos.Empty](input); err != nil {
-			return nil, err
-		}
-
-		return command.Encode(tuneHost(execDocker{}, hostSystem))
-	},
-	"restore": func(input []byte) ([]byte, error) {
-		if _, err := command.Decode[dtos.Empty](input); err != nil {
-			return nil, err
-		}
-
-		return command.Encode(dtos.Empty{}, restoreHost(execDocker{}, hostSystem))
-	},
 	"deploy": func(input []byte) ([]byte, error) {
 		request, err := command.Decode[requests.HostDeploy](input)
 		if err != nil {
@@ -61,6 +47,9 @@ func RunHostCommand(args []string, stdin io.Reader, stdout io.Writer) int {
 }
 
 func deployAndSettle(docker Docker, srv string, system system, request requests.HostDeploy) (responses.HostDeploy, error) {
+	if err := checkProfile(request.HostProfile); err != nil {
+		return responses.HostDeploy{}, err
+	}
 	reply, err := deploy(docker, srv, request)
 	if err != nil {
 		return responses.HostDeploy{}, err
@@ -68,7 +57,7 @@ func deployAndSettle(docker Docker, srv string, system system, request requests.
 	if err := waitForEngine(docker, reply.Container); err != nil {
 		return responses.HostDeploy{}, err
 	}
-	_, err = tuneEngineIn(docker, system, reply.Container)
+	_, err = system.tune(reply.Engine, request.HostProfile)
 
 	return reply, err
 }

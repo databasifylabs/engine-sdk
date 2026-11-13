@@ -4,7 +4,6 @@ set -euo pipefail
 tools=$(cd "$(dirname "$0")" && pwd)
 root=$PWD
 versions=versions.json
-sdk_module=github.com/databasifylabs/engine-sdk
 content_label=io.databasify.content-hash
 reusable_builds=30
 docker_hub=registry-1.docker.io
@@ -24,11 +23,11 @@ Run from the engine repository root; --versions defaults to versions.json there.
                                 point the comma separated tags at the sources (DRY_RUN=true only prints)
   build <key> [buildx args...]  build the image locally from the repository
   smoke <image> <engine>        tool contract, info and engine start/stop checks
-  refresh [key...]              move base images, copied images, packages and Go modules to their newest
+  refresh [key...]              move base images, copied images, packages and tool modules to their newest
                                 patch within the pinned line, then print the changes as Markdown
   newest <key>                  the newest base tag read from stdin that stays inside the key's line
   check                         fails when a key is not <engine>-<line>, its base tag left the line
-                                or the sdk pin is not the SDK version go.mod requires
+                                or the sdk pin is not a 1.x release
 EOF
     exit 64
 }
@@ -45,56 +44,6 @@ sha() {
     sha256sum | cut -c1-64
 }
 
-go_module() {
-    (cd "$root" && go mod edit -json)
-}
-
-sdk_required() {
-    go_module | jq -er --arg module "$sdk_module" '.Require[]? | select(.Path == $module) | .Version | ltrimstr("v")'
-}
-
-local_replacements() {
-    go_module | jq -r '.Replace[]? | select(.New.Version == null) | "\(.Old.Path) \(.New.Path)"'
-}
-
-replaced_dirs() {
-    local module path
-    while read -r module path; do
-        [[ $path =~ ^\.\./[^/]+$ ]] \
-            || { echo "go.mod replaces $module with $path; images.sh only builds sibling checkouts written as ../<dir>" >&2; return 1; }
-        (cd "$root" && cd "$path" 2> /dev/null && [ -f go.mod ] && pwd) \
-            || { echo "go.mod replaces $module with $path, which is not a module checkout" >&2; return 1; }
-    done < <(local_replacements)
-}
-
-go_files_in() {
-    (cd "$1" && find . -path ./.git -prune -o -type f \( -name go.mod -o -name go.sum -o -name '*.go' \) ! -name '*_test.go' -print | LC_ALL=C sort)
-}
-
-go_sources_in() {
-    (cd "$1" && go_files_in . | xargs cat) | sha
-}
-
-sources_hash() {
-    local dirs dir
-    dirs=$(replaced_dirs) || return 1
-    {
-        go_sources_in "$root"
-        for dir in $dirs; do
-            go_sources_in "$dir"
-        done
-    } | sha
-}
-
-stage_modules() {
-    local staging=$1 dirs dir
-    dirs=$(replaced_dirs) || return 1
-    for dir in $dirs; do
-        mkdir -p "$staging/${dir##*/}"
-        go_files_in "$dir" | (cd "$dir" && tar -cf - -T -) | tar -xf - -C "$staging/${dir##*/}"
-    done
-}
-
 cmd_keys() {
     jq -c --arg engine "$1" '[.images | to_entries[] | select(.value.engine == $engine) | .key] | sort' "$versions"
 }
@@ -105,7 +54,7 @@ cmd_args() {
         def ref: "\(.image):\(.tag)@\(.digest)";
         def argname: ascii_upcase | gsub("[^A-Z0-9]"; "_");
         .go as $go | .images[$key] as $image |
-        "GO_IMAGE=\($go | ref)",
+        ($go // empty | "GO_IMAGE=\(ref)"),
         "BASE_IMAGE=\($image.base | ref)",
         "RELEASE=\($image.release)",
         "LINE=\($image.line)",
@@ -126,12 +75,11 @@ image_files_of() {
 }
 
 cmd_hash() {
-    local engine sources files pins
+    local engine files pins
     engine=$(engine_of "$1") || return 1
-    sources=$(sources_hash) || return 1
     files=$(image_files_of "$engine" | xargs cat | sha) || return 1
     pins=$(jq -cS --arg key "$1" '{registry, sdk, go, image: .images[$key]}' "$versions") || return 1
-    printf '%s\n%s\n%s\n' "$sources" "$files" "$pins" | sha
+    printf '%s\n%s\n' "$files" "$pins" | sha
 }
 
 registry_tags() {
@@ -234,24 +182,21 @@ cmd_build() {
     shift
     engine=$(engine_of "$key")
     hash=$(cmd_hash "$key")
-    modules=$(mktemp -d)
-    trap 'rm -rf "$modules"' EXIT
-    stage_modules "$modules"
     local args=()
     while IFS= read -r line; do
         args+=(--build-arg "$line")
     done < <(cmd_args "$key")
-    docker buildx build "${args[@]}" --build-context "modules=$modules" --label "$content_label=$hash" --file "$root/images/$engine/Dockerfile" "$@" "$root"
+    docker buildx build "${args[@]}" --label "$content_label=$hash" --file "$root/images/$engine/Dockerfile" "$@" "$root"
 }
 
 cmd_smoke() {
     local engine=$2 checks="$root/images/$2/smoke" info code
     smoke_image=$1
     smoke_container="databasify-smoke-$engine-$$"
-    echo "--- databasify info"
-    info=$(docker run --rm --entrypoint databasify "$smoke_image" info)
+    echo "--- engine info"
+    info=$(docker run --rm --interactive --entrypoint databasify "$smoke_image" engine info <<< '{}')
     echo "$info"
-    grep -qx "engine=$engine" <<< "$info"
+    jq -e --arg engine "$engine" '.engine == $engine' <<< "$info" > /dev/null
     echo "--- tool contract"
     docker run --rm --entrypoint bash "$smoke_image" -c '
         for tool in bash ps ss ip jq openssl curl; do
@@ -266,7 +211,7 @@ cmd_smoke() {
     cp "$checks/processes.json" "$smoke_work/conf/processes.json"
     [ ! -f "$checks/postgresql.conf" ] || cp "$checks/postgresql.conf" "$smoke_work/conf/postgresql.conf"
     docker run -d --name "$smoke_container" --volume "$smoke_work:/srv/$engine" "$smoke_image" > /dev/null
-    if ! docker exec -i "$smoke_container" databasify step smoke < "$checks/check.sh"; then
+    if ! docker exec -i "$smoke_container" bash -euo pipefail -s < "$checks/check.sh"; then
         docker logs "$smoke_container" 2>&1 | tail -50
         exit 1
     fi
@@ -283,8 +228,8 @@ cmd_smoke() {
 
 run_conformance() {
     local result
-    echo "--- engine api conformance"
-    result=$(cd "$root" && DATABASIFY_CONFORMANCE_CONTAINER=$smoke_container go test -count=1 -v -run TestConformance github.com/databasifylabs/engine-sdk/conformance 2>&1) || { echo "$result"; exit 1; }
+    echo "--- runtime conformance"
+    result=$(cd "$tools/.." && DATABASIFY_CONFORMANCE_CONTAINER=$smoke_container go test -count=1 -v -run TestConformance ./conformance 2>&1) || { echo "$result"; exit 1; }
     echo "$result"
     grep -q -e '--- PASS: TestConformance' <<< "$result" || { echo "conformance did not run to a pass"; exit 1; }
 }
@@ -365,10 +310,13 @@ cmd_newest() {
 }
 
 cmd_check() {
-    local key expected tag sdk required failed=0
+    local key expected tag sdk engine failed=0
     sdk=$(jq -er .sdk "$versions")
-    required=$(sdk_required) || { echo "go.mod does not require $sdk_module" >&2; return 1; }
-    [ "$sdk" = "$required" ] || { echo "the sdk pin $sdk is not $required, the version go.mod requires" >&2; failed=1; }
+    [[ $sdk =~ ^1\.[0-9]+\.[0-9]+$ ]] || { echo "the sdk pin $sdk is not a 1.x release" >&2; failed=1; }
+    for engine in $(jq -r '[.images[].engine] | unique[]' "$versions"); do
+        grep -Eq "^FROM ghcr\.io/databasifylabs/engine-sdk:${sdk//./\\.}@sha256:[0-9a-f]{64} AS sdk\$" "$root/images/$engine/Dockerfile" \
+            || { echo "images/$engine/Dockerfile must copy the runtime from ghcr.io/databasifylabs/engine-sdk:$sdk@sha256:<digest> AS sdk" >&2; failed=1; }
+    done
     for key in $(jq -r '.images | keys[]' "$versions"); do
         expected="$(engine_of "$key")-$(field "$key" .line)"
         tag=$(field "$key" .base.tag)
@@ -445,7 +393,9 @@ cmd_refresh() {
     done
     before=$(mktemp)
     cp "$versions" "$before"
-    refresh_pinned_image .go
+    if jq -e 'has("go")' "$versions" > /dev/null; then
+        refresh_pinned_image .go
+    fi
     for key in "$@"; do
         refresh_base "$key"
         refresh_copies "$key"

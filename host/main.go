@@ -1,7 +1,6 @@
 package host
 
 import (
-	"fmt"
 	"io"
 
 	"github.com/databasifylabs/engine-sdk/command"
@@ -11,22 +10,16 @@ import (
 const usageText = `usage: databasify <command>
 
 commands:
-  host deploy|remove|tune|restore  manage the engine container on this server
-  <group> <verb>                   run an engine command in the engine container
-  version                          print the SDK version
+  host deploy|remove  manage the engine container on this server
+  <group> <verb>      run a runtime command in the engine container
 `
 
-func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, version string) int {
+func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if IsHostCommand(args) {
 		return RunHostCommand(args, stdin, stdout)
 	}
 	if command.IsWellFormed(args) {
 		return Forward(args, stdin, stdout, stderr)
-	}
-	if len(args) == 1 && args[0] == "version" {
-		_, _ = fmt.Fprintln(stdout, version)
-
-		return 0
 	}
 	_, _ = io.WriteString(stderr, usageText)
 

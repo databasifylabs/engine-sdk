@@ -17,10 +17,9 @@ import (
 )
 
 const (
-	RuntimeProtocol int64 = 1
-	outputCap             = 1 << 20
-	timedOutExit          = 124
-	pipeGrace             = 2 * time.Second
+	outputCap    = 1 << 20
+	timedOutExit = 124
+	pipeGrace    = 2 * time.Second
 )
 
 type cappedOutput struct {
@@ -39,14 +38,6 @@ func (c *cappedOutput) Write(chunk []byte) (int, error) {
 	c.data = append(c.data, chunk...)
 
 	return len(chunk), nil
-}
-
-func runtimeInfo(engine Engine, version string, input []byte) (responses.RuntimeInfo, error) {
-	if _, err := Decode[struct{}](input); err != nil {
-		return responses.RuntimeInfo{}, err
-	}
-
-	return responses.RuntimeInfo{Protocol: RuntimeProtocol, Engine: engine.Name(), Sdk: version}, nil
 }
 
 func runScript(ctx context.Context, request requests.RuntimeRun) (responses.RuntimeRun, error) {

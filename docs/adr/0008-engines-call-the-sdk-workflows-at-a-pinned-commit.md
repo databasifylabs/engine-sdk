@@ -12,20 +12,19 @@ Every engine, the team's and a plugin author's, lives in its own repository and 
 ## Decision
 
 - The SDK ships `engine-images.yml` and `engine-refresh.yml` as reusable workflows with the inputs `engine` and `versions-file`. An engine repository calls them at a full 40-character SDK commit SHA (`engine-images.yml@<sha>`), never a tag or a branch; it holds `images/<engine>/` and a `versions.json` with `registry`, `sdk`, `go` and its own lines.
-- `tools/images.sh` runs from the engine repository root, reads that repository's `versions.json` and `images/`, and takes its helper scripts from the SDK checkout the workflow makes at the `go.mod` version.
-- An image's content hash covers the engine's Go sources, `go.mod` and `go.sum` (so the SDK version), its image files and its pins. Every `replace` to a local path (the SDK, or a sibling engine such as `engine-mysql` for MariaDB) must be written `../<dir>`; its Go sources join the hash and are staged into the build context `modules`, which every build passes (empty without replacements) and every engine Dockerfile copies to `/src/`. A missing replacement fails the hash. Dropping the replacements once the modules are tagged needs no Dockerfile change.
+- `tools/images.sh` runs from the engine repository root, reads that repository's `versions.json` and `images/`, and takes its helper scripts from the SDK checkout the workflow makes at the `sdk` version in `versions.json`.
+- An image's content hash covers its image files and its pins, including `sdk`. Engine repositories hold no Go code ([0009](0009-engine-sdk-1-0-is-a-frozen-runtime.md)).
 - The image builder (BuildKit, `docker-container` driver) resolves names through `1.1.1.1` and `8.8.8.8`, set in a `buildkitd` config, not through the runner's resolver.
-- `engine-images.yml` runs the engine's `go vet` and `go test -race` before it builds, so an engine repository needs no Go workflow of its own.
-- `check` refuses a `versions.json` `sdk` that differs from the version `go.mod` requires.
+- `check` refuses a `versions.json` `sdk` that is not a 1.x release.
 - `<release>`, `<line>` and `latest` move only on the caller's default branch; every other branch publishes `<release>-<sha7>` only.
 
 ## Consequences
 
 - A fix to the release logic reaches an engine when its two caller workflows move to the commit carrying it; no SDK tag and no host binary release is needed.
-- The workflow commit and the SDK version in `go.mod` can differ; the tools are still checked out at the `go.mod` version.
+- The workflow commit and the `sdk` pin can differ; the tools are still checked out at the pinned version.
 - Engine repositories keep two short caller workflows; the build and publish logic has one home.
 - The caller's images workflow must be named `images.yml`: the refresh dispatches it on the pull request branch.
-- Only tagged SDK versions can be checked out for the tools; a pseudo-version in `go.mod` does not resolve.
+- Only tagged SDK versions can be checked out for the tools.
 
 ## Alternatives considered
 

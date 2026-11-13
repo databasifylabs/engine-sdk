@@ -43,15 +43,6 @@ func unitOf(key string) string {
 	return "databasify-op-" + key
 }
 
-func (o operations) start(kind string, r route, input []byte) (dtos.Operation, error) {
-	key, err := r.key(input)
-	if err != nil {
-		return dtos.Operation{}, err
-	}
-
-	return o.begin(kind, key, input)
-}
-
 func (o operations) begin(kind string, key string, input []byte) (dtos.Operation, error) {
 	if existing, found, err := o.load(key); found || err != nil {
 		return o.existing(existing, kind, err)
@@ -121,21 +112,6 @@ func (o operations) cancel(key string) (dtos.Operation, error) {
 	return o.settle(r, enums.OperationStateCancelled, nil)
 }
 
-func (o operations) runNow(ctx context.Context, engine Engine, r route, key string) error {
-	rec, found, err := o.load(key)
-	if err != nil || !found {
-		return errors.Join(err, errors.New("no operation with key "+key))
-	}
-	report := func(phase string) {
-		rec.Operation.Phase = phase
-		_ = o.save(rec)
-	}
-
-	err = r.run(ctx, engine, rec.Request, report)
-
-	return o.finish(rec, err)
-}
-
 func (o operations) finish(r record, err error) error {
 	if latest, found, _ := o.load(r.Operation.Key); found {
 		r.Operation.Phase = latest.Operation.Phase
@@ -152,6 +128,7 @@ func (o operations) finish(r record, err error) error {
 
 func (o operations) settle(r record, state enums.OperationState, failure error) (dtos.Operation, error) {
 	finished := now()
+	r.Request = nil
 	r.Operation.State = state
 	r.Operation.FinishedAt = &finished
 	if failure != nil {
@@ -210,23 +187,19 @@ func now() time.Time {
 	return time.Now().UTC().Truncate(time.Second)
 }
 
-func RunOperation(ctx context.Context, engine Engine, key string) int {
+func RunOperation(ctx context.Context, key string) int {
 	o := operationsRuntime()
 	r, found, err := o.load(key)
 	if err != nil || !found {
 		return ctl.ExitInternal
 	}
-	if r.Operation.Kind == taskKind {
-		return exitOf(o.runTask(ctx, key, os.Stdout))
-	}
-	route, known := routes[r.Operation.Kind]
-	if !known || !route.long() {
-		_ = o.finish(r, errors.New("this engine cannot run "+r.Operation.Kind))
+	if r.Operation.Kind != taskKind {
+		_ = o.finish(r, errors.New("only runtime tasks run here, not "+r.Operation.Kind))
 
 		return ctl.ExitInternal
 	}
 
-	return exitOf(o.runNow(ctx, engine, route, key))
+	return exitOf(o.runTask(ctx, key, os.Stdout))
 }
 
 func exitOf(err error) int {

@@ -101,7 +101,7 @@ func TestATaskScriptSharesTheUnitsProcessGroup(t *testing.T) {
 
 func TestTaskCommandsIgnoreOtherOperations(t *testing.T) {
 	o, _ := testOperations(t)
-	_, _ = o.start("node ready", readyRoute(nil), []byte(readyInput))
+	_, _ = o.begin("other", "ready-1", []byte(readyInput))
 
 	_, statusErr := o.taskStatus("ready-1")
 	_, stopErr := o.stopTask("ready-1")
@@ -109,5 +109,24 @@ func TestTaskCommandsIgnoreOtherOperations(t *testing.T) {
 	var failure Failure
 	if !errors.As(statusErr, &failure) || failure.Code != enums.ErrorCodeNotFound || !errors.As(stopErr, &failure) || failure.Code != enums.ErrorCodeNotFound {
 		t.Fatalf("%v %v", statusErr, stopErr)
+	}
+}
+
+func TestAFinishedTaskForgetsItsSecrets(t *testing.T) {
+	o, _ := testOperations(t)
+	request := requests.TaskStart{Key: "backup.1", Script: `test -n "$PASSWORD"`, Env: map[string]string{"PASSWORD": "s3cret-value"}}
+	input, _ := json.Marshal(request)
+	_, _ = o.startTask(request, input)
+	running, _ := os.ReadFile(o.path("backup.1"))
+
+	_ = o.runTask(context.Background(), "backup.1", os.Stdout)
+	finished, _ := os.ReadFile(o.path("backup.1"))
+	operation, _ := o.status("backup.1")
+
+	if !strings.Contains(string(running), "s3cret-value") {
+		t.Fatalf("the running task lost its request: %s", running)
+	}
+	if strings.Contains(string(finished), "s3cret-value") || operation.State != enums.OperationStateSucceeded {
+		t.Fatalf("state %s, record %s", operation.State, finished)
 	}
 }

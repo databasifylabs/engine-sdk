@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/databasifylabs/engine-sdk/command"
 	"github.com/databasifylabs/engine-sdk/responses"
 )
 
@@ -140,22 +142,33 @@ func (s system) savedOriginals(engine string) map[string]string {
 }
 
 func (s system) saveOriginals(engine string, settings map[string]string) error {
-	path := filepath.Join(s.path(originalsDir), engine)
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	}
-	if _, err := os.Stat(s.tuningFile(engine)); err == nil {
-		return nil
-	}
 	if err := os.MkdirAll(s.path(originalsDir), 0o755); err != nil {
 		return err
 	}
-	originals := map[string]string{}
+	originals := s.savedOriginals(engine)
+	tuned := s.tunedKeys(engine)
 	for key := range settings {
-		originals[key] = s.liveValue(key)
+		if _, saved := originals[key]; !saved && !tuned[key] {
+			originals[key] = s.liveValue(key)
+		}
 	}
 
-	return os.WriteFile(path, []byte(sysctlLines(originals)), 0o644)
+	return os.WriteFile(filepath.Join(s.path(originalsDir), engine), []byte(sysctlLines(originals)), 0o644)
+}
+
+func (s system) tunedKeys(engine string) map[string]bool {
+	tuned := map[string]bool{}
+	data, err := os.ReadFile(s.tuningFile(engine))
+	if err != nil {
+		return tuned
+	}
+	for line := range strings.Lines(string(data)) {
+		if key, _, found := strings.Cut(strings.TrimSpace(line), " = "); found {
+			tuned[key] = true
+		}
+	}
+
+	return tuned
 }
 
 func sysctlLines(settings map[string]string) string {
@@ -222,6 +235,26 @@ func run(name string, args ...string) error {
 	output, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+
+	return nil
+}
+
+var (
+	sysctlKey   = regexp.MustCompile(`^[a-z0-9_-]+(\.[a-z0-9_-]+)+$`)
+	sysctlValue = regexp.MustCompile(`^[[:print:]]+$`)
+)
+
+func checkProfile(profile responses.EngineHostProfile) error {
+	for key, value := range profile.Settings {
+		if !sysctlKey.MatchString(key) || !sysctlValue.MatchString(value) {
+			return command.Invalid(fmt.Sprintf("the host profile setting %q = %q is not a sysctl key and value", key, value))
+		}
+	}
+	for key := range profile.Floors {
+		if !sysctlKey.MatchString(key) {
+			return command.Invalid(fmt.Sprintf("the host profile floor %q is not a sysctl key", key))
+		}
 	}
 
 	return nil

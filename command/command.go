@@ -8,7 +8,6 @@ import (
 	"io"
 	"regexp"
 
-	"github.com/databasifylabs/engine-sdk/contract"
 	"github.com/databasifylabs/engine-sdk/dtos"
 	"github.com/databasifylabs/engine-sdk/responses"
 	"github.com/databasifylabs/engine-sdk/support"
@@ -34,9 +33,9 @@ func IsWellFormed(argv []string) bool {
 	return len(argv) == 2 && commandWord.MatchString(argv[0]) && commandWord.MatchString(argv[1])
 }
 
-func Run(ctx context.Context, engine Engine, version string, argv []string, stdin io.Reader, stdout io.Writer) int {
+func Run(ctx context.Context, version string, argv []string, stdin io.Reader, stdout io.Writer) int {
 	return Answer(stdin, stdout, func(input []byte) ([]byte, error) {
-		return dispatch(ctx, engine, version, nameOf(argv), input)
+		return dispatch(ctx, version, nameOf(argv), input)
 	})
 }
 
@@ -54,23 +53,12 @@ func nameOf(argv []string) string {
 	return argv[0] + " " + argv[1]
 }
 
-func dispatch(ctx context.Context, engine Engine, version string, name string, input []byte) ([]byte, error) {
-	if handler, found := neutralHandlers(engine, version)[name]; found {
+func dispatch(ctx context.Context, version string, name string, input []byte) ([]byte, error) {
+	if handler, found := neutralHandlers(version)[name]; found {
 		return handler(ctx, input)
 	}
-	r, found := routes[name]
-	if !found || !r.offeredBy(engine, name) {
-		return nil, Unsupported(name)
-	}
-	if r.long() {
-		return Encode(operationsRuntime().start(name, r, input))
-	}
-	encoded, err := r.call(ctx, engine, input)
-	if errors.Is(err, contract.ErrUnsupported) {
-		return nil, Unsupported(name)
-	}
 
-	return encoded, err
+	return nil, Unsupported(name)
 }
 
 func Encode[T any](value T, err error) ([]byte, error) {

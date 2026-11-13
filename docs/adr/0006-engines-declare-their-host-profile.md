@@ -1,6 +1,6 @@
 # 0006. Engines declare their host profile
 
-- Status: Accepted
+- Status: Superseded by 0009
 - Date: 2026-11-11
 
 ## Context
@@ -30,6 +30,5 @@
 - `contract/engine.go`
 - `command/neutral.go`
 - `responses/engine_host_profile.go`
-- `host/engine.go`
 - `host/tuning.go`
 - `host/deploy.go`

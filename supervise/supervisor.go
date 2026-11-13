@@ -4,14 +4,11 @@ import (
 	"cmp"
 	"context"
 	"io"
-	"reflect"
 	"slices"
 	"sync"
 	"time"
 
-	"github.com/databasifylabs/engine-sdk/dtos"
 	"github.com/databasifylabs/engine-sdk/layout"
-	"github.com/databasifylabs/engine-sdk/logship"
 	"github.com/databasifylabs/engine-sdk/manifest"
 )
 
@@ -40,8 +37,6 @@ type Supervisor struct {
 	order         []string
 	enabled       *enabledStore
 	stopSchedules context.CancelFunc
-	stopShipping  context.CancelFunc
-	shipping      dtos.LogDestination
 }
 
 func New(options Options) *Supervisor {
@@ -56,7 +51,6 @@ func New(options Options) *Supervisor {
 		units:         map[string]*unit{},
 		enabled:       loadEnabledStore(options.Layout.EnabledState()),
 		stopSchedules: func() {},
-		stopShipping:  func() {},
 	}
 }
 
@@ -70,7 +64,6 @@ func (s *Supervisor) Boot() {
 	}
 	s.apply(loaded)
 	s.startEnabled()
-	s.syncShipping()
 }
 
 func (s *Supervisor) ReloadManifest() error {
@@ -80,14 +73,12 @@ func (s *Supervisor) ReloadManifest() error {
 	}
 	removed := s.apply(loaded)
 	s.stopInOrder(removed)
-	s.syncShipping()
 	s.logs.event("databasify", "manifest reloaded")
 
 	return nil
 }
 
 func (s *Supervisor) Shutdown() {
-	s.stopShipping()
 	s.mu.Lock()
 	s.stopSchedules()
 	auxiliary := s.unitsWhere(func(u *unit) bool { return u.kind != kindProcess })
@@ -210,19 +201,3 @@ var closed = func() chan struct{} {
 
 	return ch
 }()
-
-func (s *Supervisor) syncShipping() {
-	destination, found := logship.Load(s.layout.Home)
-	if found && reflect.DeepEqual(destination, s.shipping) {
-		return
-	}
-	s.stopShipping()
-	s.stopShipping, s.shipping = func() {}, dtos.LogDestination{}
-	if !found {
-		return
-	}
-	ctx, stop := context.WithCancel(context.Background())
-	s.stopShipping, s.shipping = stop, destination
-	go logship.Run(ctx, destination, s.layout.Logs())
-	s.logs.event("databasify", "forwarding logs to %s", destination.Endpoint)
-}

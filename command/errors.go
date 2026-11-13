@@ -32,10 +32,6 @@ func Unavailable(message string) Failure {
 	return Failure{Code: enums.ErrorCodeUnavailable, Message: message}
 }
 
-func NotPrimary(message string) Failure {
-	return Failure{Code: enums.ErrorCodeNotPrimary, Message: message}
-}
-
 func NotFound(message string) Failure {
 	return Failure{Code: enums.ErrorCodeNotFound, Message: message}
 }

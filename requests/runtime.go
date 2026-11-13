@@ -28,7 +28,3 @@ type FilePut struct {
 type FileGet struct {
 	Path string `json:"path" min:"1" max:"255"`
 }
-
-type ServiceUnits struct {
-	Units []string `json:"units" pattern:"^[A-Za-z0-9@._-]{1,128}$"`
-}

@@ -1,14 +1,11 @@
 package command
 
 import (
-	"context"
 	"errors"
 	"testing"
 
-	"github.com/databasifylabs/engine-sdk/contract"
 	"github.com/databasifylabs/engine-sdk/ctl"
 	"github.com/databasifylabs/engine-sdk/enums"
-	"github.com/databasifylabs/engine-sdk/requests"
 )
 
 type fakeSupervisor struct {
@@ -39,21 +36,11 @@ func testOperations(t *testing.T) (operations, *fakeSupervisor) {
 	return operations{dir: t.TempDir(), units: supervisor, executable: "/usr/local/bin/databasify"}, supervisor
 }
 
-func readyRoute(err error) route {
-	return long(nodes, func(r requests.NodeReady) string { return r.Key }, func(Engine) func(context.Context, requests.NodeReady, contract.Report) error {
-		return func(_ context.Context, _ requests.NodeReady, report contract.Report) error {
-			report("waiting")
-
-			return err
-		}
-	})
-}
-
 const readyInput = `{"key":"ready-1","expectPrimary":true}`
 
-func TestStartSavesARunningOperationAndRunsItsUnit(t *testing.T) {
+func TestBeginSavesARunningOperationAndRunsItsUnit(t *testing.T) {
 	o, supervisor := testOperations(t)
-	operation, err := o.start("node ready", readyRoute(nil), []byte(readyInput))
+	operation, err := o.begin(taskKind, "ready-1", []byte(readyInput))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,8 +54,8 @@ func TestStartSavesARunningOperationAndRunsItsUnit(t *testing.T) {
 
 func TestStartingAnExistingKeyReturnsItWithoutASecondUnit(t *testing.T) {
 	o, supervisor := testOperations(t)
-	_, _ = o.start("node ready", readyRoute(nil), []byte(readyInput))
-	if _, err := o.start("node ready", readyRoute(nil), []byte(readyInput)); err != nil {
+	_, _ = o.begin(taskKind, "ready-1", []byte(readyInput))
+	if _, err := o.begin(taskKind, "ready-1", []byte(readyInput)); err != nil {
 		t.Fatal(err)
 	}
 	if len(supervisor.started) != 1 {
@@ -78,8 +65,8 @@ func TestStartingAnExistingKeyReturnsItWithoutASecondUnit(t *testing.T) {
 
 func TestAKeyUsedByAnotherKindIsBusy(t *testing.T) {
 	o, _ := testOperations(t)
-	_, _ = o.start("node ready", readyRoute(nil), []byte(readyInput))
-	_, err := o.start("cluster enable", readyRoute(nil), []byte(readyInput))
+	_, _ = o.begin(taskKind, "ready-1", []byte(readyInput))
+	_, err := o.begin("other", "ready-1", []byte(readyInput))
 	var failure Failure
 	if !errors.As(err, &failure) || failure.Code != enums.ErrorCodeBusy {
 		t.Fatalf("err = %v", err)
@@ -88,7 +75,7 @@ func TestAKeyUsedByAnotherKindIsBusy(t *testing.T) {
 
 func TestARunningOperationWhoseUnitVanishedIsInterrupted(t *testing.T) {
 	o, supervisor := testOperations(t)
-	_, _ = o.start("node ready", readyRoute(nil), []byte(readyInput))
+	_, _ = o.begin(taskKind, "ready-1", []byte(readyInput))
 	supervisor.active = map[string]bool{}
 	value, err := o.status("ready-1")
 	if err != nil || value.State != enums.OperationStateInterrupted {
@@ -98,7 +85,7 @@ func TestARunningOperationWhoseUnitVanishedIsInterrupted(t *testing.T) {
 
 func TestCancelStopsTheUnit(t *testing.T) {
 	o, supervisor := testOperations(t)
-	_, _ = o.start("node ready", readyRoute(nil), []byte(readyInput))
+	_, _ = o.begin(taskKind, "ready-1", []byte(readyInput))
 	value, err := o.cancel("ready-1")
 	if err != nil || value.State != enums.OperationStateCancelled || supervisor.stopped[0] != "databasify-op-ready-1" {
 		t.Fatalf("value = %+v, err = %v, stopped = %v", value, err, supervisor.stopped)
@@ -109,11 +96,11 @@ func TestRunRecordsSuccessAndFailure(t *testing.T) {
 	for name, runErr := range map[string]error{"succeeded": nil, "failed": errors.New("clone broke")} {
 		t.Run(name, func(t *testing.T) {
 			o, _ := testOperations(t)
-			ready := readyRoute(runErr)
-			_, _ = o.start("node ready", ready, []byte(readyInput))
-			_ = o.runNow(context.Background(), nil, ready, "ready-1")
+			_, _ = o.begin(taskKind, "ready-1", []byte(readyInput))
+			started, _, _ := o.load("ready-1")
+			_ = o.finish(started, runErr)
 			r, _, _ := o.load("ready-1")
-			if string(r.Operation.State) != name || r.Operation.Phase != "waiting" || r.Operation.FinishedAt == nil {
+			if string(r.Operation.State) != name || r.Operation.FinishedAt == nil {
 				t.Fatalf("operation = %+v", r.Operation)
 			}
 			if runErr != nil && r.Operation.Error.Message != "clone broke" {
@@ -134,9 +121,9 @@ func TestUnknownStatusKeyIsNotFound(t *testing.T) {
 
 func TestAFailedOperationKeepsItsErrorCode(t *testing.T) {
 	o, _ := testOperations(t)
-	ready := readyRoute(Invalid("add a primary key"))
-	_, _ = o.start("node ready", ready, []byte(readyInput))
-	_ = o.runNow(context.Background(), nil, ready, "ready-1")
+	_, _ = o.begin(taskKind, "ready-1", []byte(readyInput))
+	started, _, _ := o.load("ready-1")
+	_ = o.finish(started, Invalid("add a primary key"))
 
 	r, _, _ := o.load("ready-1")
 
