@@ -38,19 +38,9 @@ jobs:
         with:
           path: engine
 
-      - name: Read the Go version of the images
-        id: go
-        run: echo "version=$(jq -er '.go.tag | split("-")[0]' "$VERSIONS")" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ steps.go.outputs.version }}
-          cache: false
-
-      - name: Read the SDK version go.mod requires
+      - name: Read the SDK version the images pin
         id: sdk
-        run: echo "version=$(go mod edit -json | jq -er '.Require[] | select(.Path == "github.com/databasifylabs/engine-sdk") | .Version')" >> "$GITHUB_OUTPUT"
+        run: echo "version=v$(jq -er .sdk "$VERSIONS")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the SDK tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

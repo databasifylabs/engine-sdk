@@ -44,21 +44,17 @@ func engineNameIn(docker Docker, container string) (string, error) {
 	return info.Engine, err
 }
 
-func tuneHost(docker Docker, system system) (responses.HostTune, error) {
+func tuneHost(docker Docker, system system, profile responses.EngineHostProfile) (responses.HostTune, error) {
 	container, err := runningEngine(docker)
 	if err != nil {
 		return responses.HostTune{}, err
 	}
 
-	return tuneEngineIn(docker, system, container)
+	return tuneEngineIn(docker, system, container, profile)
 }
 
-func tuneEngineIn(docker Docker, system system, container string) (responses.HostTune, error) {
+func tuneEngineIn(docker Docker, system system, container string, profile responses.EngineHostProfile) (responses.HostTune, error) {
 	engine, err := engineNameIn(docker, container)
-	if err != nil {
-		return responses.HostTune{}, err
-	}
-	profile, err := ask[responses.EngineHostProfile](docker, container, "engine", "host-profile")
 	if err != nil {
 		return responses.HostTune{}, err
 	}

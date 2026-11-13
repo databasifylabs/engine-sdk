@@ -53,7 +53,7 @@ func (d fakeDocker) RunWithInput(input string, args ...string) (string, error) {
 		return `{"engine":"` + d.engine + `","line":"18","version":"18.1","sdk":"0.2.0"}`, nil
 	}
 
-	return zeroProfile, nil
+	return "", errors.New("the host asked the image for " + strings.Join(args, " "))
 }
 
 func (d fakeDocker) sdk() string {

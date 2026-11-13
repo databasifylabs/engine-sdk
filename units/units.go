@@ -15,10 +15,6 @@ func (c Control) Do(verb string, units ...string) error {
 	return c.send(ctl.Request{Verb: verb, Units: units, Quiet: true})
 }
 
-func (c Control) DoNoBlock(verb string, units ...string) error {
-	return c.send(ctl.Request{Verb: verb, Units: units, Quiet: true, NoBlock: true})
-}
-
 func (c Control) Active(unit string) bool {
 	response, err := ctl.Send(c.Socket, ctl.Request{Verb: "is-active", Quiet: true, Units: []string{unit}})
 
@@ -61,12 +57,4 @@ func (c Control) send(request ctl.Request) error {
 
 func (c Control) Kill(signal string, units ...string) error {
 	return c.send(ctl.Request{Verb: "kill", Units: units, Quiet: true, Signal: signal})
-}
-
-func (c Control) EnableNow(units ...string) error {
-	return c.send(ctl.Request{Verb: "enable", Units: units, Quiet: true, Now: true})
-}
-
-func (c Control) DisableNow(units ...string) error {
-	return c.send(ctl.Request{Verb: "disable", Units: units, Quiet: true, Now: true})
 }

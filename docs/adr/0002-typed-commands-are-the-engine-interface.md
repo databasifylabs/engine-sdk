@@ -1,6 +1,6 @@
 # 0002. Typed `databasify` commands are the only engine interface
 
-- Status: Accepted
+- Status: Superseded by 0009
 - Date: 2026-11-09
 
 ## Context

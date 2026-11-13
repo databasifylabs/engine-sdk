@@ -9,33 +9,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/databasifylabs/engine-sdk/contract"
 	"github.com/databasifylabs/engine-sdk/dtos"
 	"github.com/databasifylabs/engine-sdk/enums"
 	"github.com/databasifylabs/engine-sdk/requests"
 	"github.com/databasifylabs/engine-sdk/responses"
 	"github.com/databasifylabs/engine-sdk/support"
-	"github.com/databasifylabs/engine-sdk/testtls"
 )
 
 const (
 	runtimeProtocol = 1
 	conformanceFile = "state/conformance-check"
 	commandTimeout  = 60 * time.Second
-	quotedPassword  = "p'a\"s\\s wörd"
-	changedPassword = "n'e\"w\\p wörd"
-	newlinePassword = "l'i\"n\\e\nwörd"
-	codeNotFound    = "not_found"
-)
-
-var (
-	mandatoryCommands = []string{"engine capabilities", "engine host-profile", "engine info", "node status"}
-	passwordForms     = formsOf(quotedPassword, changedPassword, newlinePassword)
+	taskWait        = 30 * time.Second
+	secret          = "p'a\"s\\s wörd"
 )
 
 type Failure struct {
@@ -44,47 +34,33 @@ type Failure struct {
 }
 
 type step struct {
-	name    string
-	command string
-	run     func() error
+	name string
+	run  func() error
 }
 
 type lifecycle struct {
-	ctx             context.Context
-	runner          Runner
-	database        string
-	user            string
-	missingUser     string
-	missingKey      string
-	capabilities    responses.EngineCapabilities
-	databaseCreated bool
-	userCreated     bool
-	failures        []Failure
+	ctx      context.Context
+	runner   Runner
+	marker   string
+	failures []Failure
 }
 
 func Run(t *testing.T, r Runner) {
 	t.Helper()
-	l := newLifecycle(context.Background(), r)
-	t.Cleanup(l.cleanup)
-	for _, failure := range l.run() {
+	for _, failure := range Failures(context.Background(), r) {
 		t.Errorf("%s: %v", failure.Step, failure.Err)
 	}
 }
 
 func Failures(ctx context.Context, r Runner) []Failure {
-	return newLifecycle(ctx, r).run()
-}
-
-func newLifecycle(ctx context.Context, r Runner) *lifecycle {
-	suffix := randomHex(3)
-	return &lifecycle{
-		ctx:         ctx,
-		runner:      r,
-		database:    "ct_" + suffix,
-		user:        "ct_" + suffix,
-		missingUser: "ct_missing_" + suffix,
-		missingKey:  "ct-missing-" + suffix,
+	l := &lifecycle{ctx: ctx, runner: r, marker: randomHex(4)}
+	for _, s := range l.steps() {
+		if err := s.run(); err != nil {
+			l.failures = append(l.failures, Failure{Step: s.name, Err: err})
+		}
 	}
+
+	return l.failures
 }
 
 func randomHex(size int) string {
@@ -92,142 +68,26 @@ func randomHex(size int) string {
 	if _, err := rand.Read(buffer); err != nil {
 		panic(err)
 	}
+
 	return hex.EncodeToString(buffer)
-}
-
-func (l *lifecycle) run() []Failure {
-	if !l.discoverCapabilities() {
-		return l.failures
-	}
-	for _, s := range l.steps() {
-		l.perform(s)
-	}
-	l.probeUnsupported()
-	l.cleanup()
-	return l.failures
-}
-
-func (l *lifecycle) fail(name string, err error) {
-	l.failures = append(l.failures, Failure{Step: name, Err: err})
-}
-
-func (l *lifecycle) supports(command string) bool {
-	return slices.Contains(l.capabilities.Commands, command)
-}
-
-func (l *lifecycle) perform(s step) {
-	if !l.supports(s.command) {
-		return
-	}
-	if err := s.run(); err != nil {
-		l.fail(s.name, err)
-	}
-}
-
-func (l *lifecycle) discoverCapabilities() bool {
-	capabilities, err := callReply[responses.EngineCapabilities](l, "engine capabilities", dtos.Empty{})
-	if err != nil {
-		l.fail("engine capabilities", err)
-		return false
-	}
-	l.capabilities = capabilities
-	for _, command := range mandatoryCommands {
-		if !l.supports(command) {
-			l.fail(command+" mandatory", fmt.Errorf("commands %v do not list the mandatory %s", capabilities.Commands, command))
-		}
-	}
-	return true
 }
 
 func (l *lifecycle) steps() []step {
 	return []step{
-		{"engine info", "engine info", l.checkEngineInfo},
-		{"runtime info", "runtime info", l.checkRuntimeInfo},
-		{"runtime run", "runtime run", l.checkRuntimeRun},
-		{"file round trip", "file get", l.checkFileRoundTrip},
-		{"engine host-profile", "engine host-profile", func() error { return l.expectSuccess("engine host-profile", dtos.Empty{}) }},
-		{"node status", "node status", func() error { return l.expectSuccess("node status", dtos.Empty{}) }},
-		{"account list", "account list", func() error { return l.expectSuccess("account list", dtos.Empty{}) }},
-		{"database create", "database create", func() error { return l.createDatabase(true) }},
-		{"database create again", "database create", func() error { return l.createDatabase(false) }},
-		{"user create", "user create", func() error { return l.createUser(quotedPassword, true) }},
-		{"user create again", "user create", func() error { return l.createUser(changedPassword, false) }},
-		{"user set-password", "user set-password", l.setPassword},
-		{"user set-password with a newline", "user set-password", l.setNewlinePassword},
-		{"user set-password missing user", "user set-password", func() error {
-			request := requests.UserSetPassword{Name: l.missingUser, Password: changedPassword}
-			return l.expectError("user set-password", request, exitFailure, codeNotFound)
+		{"engine info", l.checkEngineInfo},
+		{"runtime info", l.checkRuntimeInfo},
+		{"runtime run", l.checkRuntimeRun},
+		{"runtime run keeps env secrets out of the reply", l.checkSecretInEnv},
+		{"file round trip", l.checkFileRoundTrip},
+		{"task runs to success", l.checkTask},
+		{"engine info array input", func() error { return l.expectInvalid("engine info", `[]`) }},
+		{"engine commands are unsupported", func() error {
+			return l.expectError("node status", dtos.Empty{}, exitFor(codeUnsupported), codeUnsupported)
 		}},
-		{"user grant", "user grant", l.grant},
-		{"account list shows new accounts", "account list", l.listAccounts},
-		{"user drop", "user drop", func() error { return l.dropUser(true) }},
-		{"database drop", "database drop", func() error { return l.dropDatabase(true) }},
-		{"user drop again", "user drop", func() error { return l.dropUser(false) }},
-		{"database drop again", "database drop", func() error { return l.dropDatabase(false) }},
-		{"operation status unknown key", "operation status", func() error {
-			return l.expectError("operation status", requests.OperationStatus{Key: l.missingKey}, exitFailure, codeNotFound)
-		}},
-		{"operation cancel unknown key", "operation cancel", func() error {
-			return l.expectError("operation cancel", requests.OperationCancel{Key: l.missingKey}, exitFailure, codeNotFound)
-		}},
-		{"unknown field on database create", "database create", func() error {
-			return l.expectInvalid("database create", fmt.Sprintf(`{"name":%q,"unexpectedField":true}`, l.database))
-		}},
-		{"database create bad identifier", "database create", func() error {
-			return l.expectInvalid("database create", `{"name":"a b'; --"}`)
-		}},
-		{"database create missing key", "database create", func() error { return l.expectInvalid("database create", `{}`) }},
-		{"database create case-variant key", "database create", func() error {
-			return l.expectInvalid("database create", fmt.Sprintf(`{"name":%[1]q,"Name":%[1]q}`, l.database))
-		}},
-		{"user create empty password", "user create", func() error {
-			return l.expectInvalid("user create", fmt.Sprintf(`{"name":%q,"password":"","databases":[],"encryption":null}`, l.user))
-		}},
-		{"engine info array input", "engine info", func() error { return l.expectInvalid("engine info", `[]`) }},
-		{"tls install", "tls install", l.installTLS},
-		{"tls install mismatched key", "tls install", l.installMismatchedTLS},
 	}
 }
 
-func (l *lifecycle) probeUnsupported() {
-	for _, spec := range contract.Commands {
-		if l.supports(spec.Name) {
-			continue
-		}
-		err := l.expectError(spec.Name, l.requestFor(spec.Name), exitFailure, codeUnsupported)
-		if err != nil {
-			l.fail(spec.Name+" unsupported", err)
-		}
-	}
-}
-
-func (l *lifecycle) requestFor(command string) any {
-	switch command {
-	case "database create":
-		return requests.DatabaseCreate{Name: l.database}
-	case "database drop":
-		return requests.DatabaseDrop{Name: l.database}
-	case "user create":
-		return requests.UserCreate{Name: l.user, Password: quotedPassword, Grants: []dtos.Grant{{Database: l.database, Access: enums.AccessWrite}}}
-	case "user set-password":
-		return requests.UserSetPassword{Name: l.user, Password: changedPassword}
-	case "user drop":
-		return requests.UserDrop{Name: l.user}
-	case "user grant":
-		return requests.UserGrant{Name: l.user, Grants: []dtos.Grant{{Database: l.database, Access: enums.AccessWrite}}}
-	case "operation status":
-		return requests.OperationStatus{Key: l.missingKey}
-	case "operation cancel":
-		return requests.OperationCancel{Key: l.missingKey}
-	}
-	return struct{}{}
-}
-
-func (l *lifecycle) exec(command string, request any) ([]byte, int, error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, 0, err
-	}
+func (l *lifecycle) exec(command string, body []byte) ([]byte, int, error) {
 	ctx, cancel := context.WithTimeout(l.ctx, commandTimeout)
 	defer cancel()
 	stdout, exit, err := l.runner.Run(ctx, strings.Fields(command), body)
@@ -237,38 +97,23 @@ func (l *lifecycle) exec(command string, request any) ([]byte, int, error) {
 	if err := Check(command, stdout, exit); err != nil {
 		return nil, 0, err
 	}
-	return stdout, exit, rejectEchoedPasswords(stdout)
-}
 
-func formsOf(passwords ...string) [][]byte {
-	var forms [][]byte
-	for _, password := range passwords {
-		escaped, err := json.Marshal(password)
-		if err != nil {
-			panic(err)
-		}
-		forms = append(forms, []byte(password), escaped[1:len(escaped)-1])
-	}
-	return forms
-}
-
-func rejectEchoedPasswords(stdout []byte) error {
-	for _, form := range passwordForms {
-		if bytes.Contains(stdout, form) {
-			return errors.New("stdout contains a test password")
-		}
-	}
-	return nil
+	return stdout, exit, nil
 }
 
 func (l *lifecycle) call(command string, request any) ([]byte, error) {
-	stdout, exit, err := l.exec(command, request)
+	body, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	stdout, exit, err := l.exec(command, body)
 	if err != nil {
 		return nil, err
 	}
 	if exit != 0 {
 		return nil, fmt.Errorf("exit = %d, want 0; stdout: %s", exit, rawOutput(stdout))
 	}
+
 	return stdout, nil
 }
 
@@ -278,72 +123,44 @@ func callReply[T any](l *lifecycle, command string, request any) (T, error) {
 	if err != nil {
 		return zero, err
 	}
+
 	return support.DecodeStrict[T](bytes.NewReader(stdout))
 }
 
-func (l *lifecycle) expectSuccess(command string, request any) error {
-	_, err := l.call(command, request)
-	return err
-}
-
-func (l *lifecycle) installTLS() error {
-	certificate, key, err := testtls.Pair()
+func (l *lifecycle) expectInvalid(command, body string) error {
+	stdout, exit, err := l.exec(command, []byte(body))
 	if err != nil {
 		return err
-	}
-
-	return l.expectSuccess("tls install", requests.TlsInstall{Certificate: certificate, Key: key, Ca: certificate})
-}
-
-func (l *lifecycle) installMismatchedTLS() error {
-	certificate, _, err := testtls.Pair()
-	if err != nil {
-		return err
-	}
-	_, otherKey, err := testtls.Pair()
-	if err != nil {
-		return err
-	}
-
-	return l.expectError("tls install", requests.TlsInstall{Certificate: certificate, Key: otherKey, Ca: certificate}, exitInvalid, codeInvalid)
-}
-
-func (l *lifecycle) expectInvalid(command, request string) error {
-	return l.expectError(command, json.RawMessage(request), exitInvalid, codeInvalid)
-}
-
-func (l *lifecycle) expectError(command string, request any, wantExit int, wantCode string) error {
-	stdout, exit, err := l.exec(command, request)
-	if err != nil {
-		return err
-	}
-	if exit != wantExit {
-		return fmt.Errorf("exit = %d, want %d; stdout: %s", exit, wantExit, rawOutput(stdout))
 	}
 	code, err := errorCode(stdout)
 	if err != nil {
 		return err
 	}
-	if code != wantCode {
-		return fmt.Errorf("error code = %q, want %q", code, wantCode)
+	if code != "invalid_request" || exit != exitFor("invalid_request") {
+		return fmt.Errorf("got %s with exit %d, want invalid_request", code, exit)
 	}
+
 	return nil
 }
 
-func expectFlag(name string, got bool, want bool) error {
-	if got != want {
-		return fmt.Errorf("%s = %v, want %v", name, got, want)
-	}
-	return nil
-}
-
-func (l *lifecycle) createDatabase(want bool) error {
-	reply, err := callReply[responses.DatabaseCreate](l, "database create", l.requestFor("database create"))
+func (l *lifecycle) expectError(command string, request any, wantExit int, wantCode string) error {
+	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	l.databaseCreated = l.databaseCreated || reply.Created
-	return expectFlag("created", reply.Created, want)
+	stdout, exit, err := l.exec(command, body)
+	if err != nil {
+		return err
+	}
+	code, err := errorCode(stdout)
+	if err != nil {
+		return err
+	}
+	if exit != wantExit || code != wantCode {
+		return fmt.Errorf("got %s with exit %d, want %s with exit %d", code, exit, wantCode, wantExit)
+	}
+
+	return nil
 }
 
 func (l *lifecycle) checkEngineInfo() error {
@@ -351,9 +168,10 @@ func (l *lifecycle) checkEngineInfo() error {
 	if err != nil {
 		return err
 	}
-	if reply.Sdk == "" {
-		return fmt.Errorf("engine info reports no sdk version")
+	if reply.Engine == "" || reply.Sdk == "" {
+		return fmt.Errorf("engine info reports engine %q and sdk %q, want both", reply.Engine, reply.Sdk)
 	}
+
 	return nil
 }
 
@@ -365,6 +183,7 @@ func (l *lifecycle) checkRuntimeInfo() error {
 	if reply.Protocol != runtimeProtocol {
 		return fmt.Errorf("runtime info reports protocol %d, want %d", reply.Protocol, runtimeProtocol)
 	}
+
 	return nil
 }
 
@@ -376,12 +195,26 @@ func (l *lifecycle) checkRuntimeRun() error {
 	if reply.Exit != 0 || reply.Stdout != "ok\n" {
 		return fmt.Errorf("runtime run of echo ok replied exit %d, stdout %q", reply.Exit, reply.Stdout)
 	}
+
+	return nil
+}
+
+func (l *lifecycle) checkSecretInEnv() error {
+	stdout, err := l.call("runtime run", requests.RuntimeRun{Script: `[ -n "$SECRET" ] && echo set`, Env: map[string]string{"SECRET": secret}, TimeoutSeconds: 10})
+	if err != nil {
+		return err
+	}
+	escaped, _ := json.Marshal(secret)
+	if bytes.Contains(stdout, []byte(secret)) || bytes.Contains(stdout, escaped[1:len(escaped)-1]) {
+		return errors.New("the reply echoes a secret passed in env")
+	}
+
 	return nil
 }
 
 func (l *lifecycle) checkFileRoundTrip() error {
-	content := base64.StdEncoding.EncodeToString([]byte(l.database))
-	if err := l.expectSuccess("file put", requests.FilePut{Path: conformanceFile, ContentBase64: content, Mode: 0o600}); err != nil {
+	content := base64.StdEncoding.EncodeToString([]byte(l.marker))
+	if _, err := l.call("file put", requests.FilePut{Path: conformanceFile, ContentBase64: content, Mode: 0o600}); err != nil {
 		return err
 	}
 	reply, err := callReply[responses.FileGet](l, "file get", requests.FileGet{Path: conformanceFile})
@@ -391,84 +224,29 @@ func (l *lifecycle) checkFileRoundTrip() error {
 	if !reply.Exists || reply.ContentBase64 != content {
 		return fmt.Errorf("file get of %s returned %+v, want what file put wrote", conformanceFile, reply)
 	}
-	return nil
-}
-
-func (l *lifecycle) createUser(password string, want bool) error {
-	request := requests.UserCreate{Name: l.user, Password: password, Grants: []dtos.Grant{{Database: l.database, Access: enums.AccessWrite}}}
-	reply, err := callReply[responses.UserCreate](l, "user create", request)
-	if err != nil {
-		return err
-	}
-	l.userCreated = l.userCreated || reply.Created
-	return expectFlag("created", reply.Created, want)
-}
-
-func (l *lifecycle) setPassword() error {
-	_, err := callReply[dtos.Empty](l, "user set-password", l.requestFor("user set-password"))
-	return err
-}
-
-func (l *lifecycle) setNewlinePassword() error {
-	stdout, exit, err := l.exec("user set-password", requests.UserSetPassword{Name: l.user, Password: newlinePassword})
-	if err != nil || exit == 0 {
-		return err
-	}
-	code, err := errorCode(stdout)
-	if err != nil {
-		return err
-	}
-	if exit != exitInvalid || code != codeInvalid {
-		return fmt.Errorf("exit = %d, code = %q; want success or a refused password; stdout: %s", exit, code, rawOutput(stdout))
-	}
 
 	return nil
 }
 
-func (l *lifecycle) grant() error {
-	_, err := callReply[dtos.Empty](l, "user grant", l.requestFor("user grant"))
-	return err
-}
-
-func (l *lifecycle) listAccounts() error {
-	reply, err := callReply[responses.AccountList](l, "account list", dtos.Empty{})
-	if err != nil {
+func (l *lifecycle) checkTask() error {
+	key := "conformance-" + l.marker
+	if _, err := l.call("task start", requests.TaskStart{Key: key, Script: "echo done", Env: map[string]string{}}); err != nil {
 		return err
 	}
-	if !slices.Contains(reply.Users, l.user) {
-		return fmt.Errorf("users %v do not contain %s", reply.Users, l.user)
+	deadline := time.Now().Add(taskWait)
+	for time.Now().Before(deadline) {
+		operation, err := callReply[dtos.Operation](l, "task status", requests.TaskKey{Key: key})
+		if err != nil {
+			return err
+		}
+		if operation.State == enums.OperationStateSucceeded {
+			return nil
+		}
+		if operation.State != enums.OperationStateRunning {
+			return fmt.Errorf("task ended %s", operation.State)
+		}
+		time.Sleep(time.Second)
 	}
-	if !slices.Contains(reply.Databases, l.database) {
-		return fmt.Errorf("databases %v do not contain %s", reply.Databases, l.database)
-	}
-	return nil
-}
 
-func (l *lifecycle) dropUser(want bool) error {
-	reply, err := callReply[responses.UserDrop](l, "user drop", l.requestFor("user drop"))
-	if err != nil {
-		return err
-	}
-	l.userCreated = false
-	return expectFlag("dropped", reply.Dropped, want)
-}
-
-func (l *lifecycle) dropDatabase(want bool) error {
-	reply, err := callReply[responses.DatabaseDrop](l, "database drop", l.requestFor("database drop"))
-	if err != nil {
-		return err
-	}
-	l.databaseCreated = false
-	return expectFlag("dropped", reply.Dropped, want)
-}
-
-func (l *lifecycle) cleanup() {
-	if l.userCreated && l.supports("user drop") {
-		_ = l.dropUser(true)
-		l.userCreated = false
-	}
-	if l.databaseCreated && l.supports("database drop") {
-		_ = l.dropDatabase(true)
-		l.databaseCreated = false
-	}
+	return fmt.Errorf("task did not finish within %s", taskWait)
 }

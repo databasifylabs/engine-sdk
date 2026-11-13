@@ -11,14 +11,9 @@ import (
 	"github.com/databasifylabs/engine-sdk/responses"
 )
 
-const zeroProfile = `{"settings":{},"floors":{},"disableTransparentHugepages":false}`
-
 const fakeImage = "ghcr.io/example/databasify-fake:1@sha256:" + "3333333333333333333333333333333333333333333333333333333333333333"
 
-type answeringEngine struct {
-	profile    string
-	profileErr error
-}
+type answeringEngine struct{}
 
 func (answeringEngine) Run(args ...string) (string, error) {
 	switch args[0] {
@@ -31,12 +26,12 @@ func (answeringEngine) Run(args ...string) (string, error) {
 	return "", nil
 }
 
-func (e answeringEngine) RunWithInput(_ string, args ...string) (string, error) {
+func (answeringEngine) RunWithInput(_ string, args ...string) (string, error) {
 	if args[len(args)-1] == "info" {
-		return `{"engine":"fake","line":"1","version":"1.0","sdk":"0.2.0"}`, nil
+		return `{"engine":"fake","line":"1","version":"1.0","sdk":"1.0.0"}`, nil
 	}
 
-	return e.profile, e.profileErr
+	return "", errors.New("the host asked the image for " + strings.Join(args, " "))
 }
 
 func refuseCommands(t *testing.T) func(string, ...string) error {
@@ -104,7 +99,7 @@ func TestAZeroProfileHasNoSettings(t *testing.T) {
 func TestHostTuneWithAZeroProfileChangesNothing(t *testing.T) {
 	root := t.TempDir()
 
-	tuned, err := tuneHost(answeringEngine{profile: zeroProfile}, system{root: root, run: refuseCommands(t)})
+	tuned, err := tuneHost(answeringEngine{}, system{root: root, run: refuseCommands(t)}, responses.EngineHostProfile{})
 
 	if err != nil || len(tuned.Settings) != 0 {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -126,9 +121,9 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "etc/systemd/system"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	profile := `{"settings":{"vm.overcommit_memory":"1"},"floors":{"net.core.somaxconn":1024},"disableTransparentHugepages":true}`
+	profile := responses.EngineHostProfile{Settings: map[string]string{"vm.overcommit_memory": "1"}, Floors: map[string]int64{"net.core.somaxconn": 1024}, DisableTransparentHugepages: true}
 
-	tuned, err := tuneHost(answeringEngine{profile: profile}, system{root: root, run: recordCommands(&calls)})
+	tuned, err := tuneHost(answeringEngine{}, system{root: root, run: recordCommands(&calls)}, profile)
 
 	if err != nil || tuned.Settings["net.core.somaxconn"] != "1024" || tuned.Settings["vm.overcommit_memory"] != "1" {
 		t.Fatalf("tuned = %+v, err = %v", tuned, err)
@@ -151,12 +146,10 @@ func TestHostTuneAppliesTheEngineProfile(t *testing.T) {
 	}
 }
 
-func TestHostTuneNamesTheImageThatDoesNotAnswerTheProfile(t *testing.T) {
-	engine := answeringEngine{profileErr: errors.New("docker exec: exit status 64: usage: databasify <command>")}
+func TestHostTuneNeverAsksTheImageForAProfile(t *testing.T) {
+	_, err := tuneHost(answeringEngine{}, system{root: t.TempDir(), run: refuseCommands(t)}, responses.EngineHostProfile{})
 
-	_, err := tuneHost(engine, system{root: t.TempDir(), run: refuseCommands(t)})
-
-	if err == nil || !strings.Contains(err.Error(), fakeImage) || !strings.Contains(err.Error(), "does not answer engine host-profile") || !strings.Contains(err.Error(), "usage: databasify") {
+	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
 }

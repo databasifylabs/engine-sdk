@@ -41,12 +41,12 @@ func (c *cappedOutput) Write(chunk []byte) (int, error) {
 	return len(chunk), nil
 }
 
-func runtimeInfo(engine Engine, version string, input []byte) (responses.RuntimeInfo, error) {
+func runtimeInfo(version string, input []byte) (responses.RuntimeInfo, error) {
 	if _, err := Decode[struct{}](input); err != nil {
 		return responses.RuntimeInfo{}, err
 	}
 
-	return responses.RuntimeInfo{Protocol: RuntimeProtocol, Engine: engine.Name(), Sdk: version}, nil
+	return responses.RuntimeInfo{Protocol: RuntimeProtocol, Engine: os.Getenv("DATABASIFY_ENGINE"), Sdk: version}, nil
 }
 
 func runScript(ctx context.Context, request requests.RuntimeRun) (responses.RuntimeRun, error) {

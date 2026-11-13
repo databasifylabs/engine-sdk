@@ -9,7 +9,7 @@ The app used to deploy each node with its own Blade script. That script checked 
 
 ## Decision
 
-- `databasify host deploy {image, databaseId, nodeId}` runs in the host binary, outside any container. It:
+- `databasify host deploy {image, databaseId, nodeId, hostProfile}` runs in the host binary, outside any container. It:
   - pulls the image when missing;
   - reads the engine from the image's `io.databasify.engine` label;
   - refuses, before changing anything, an image without an `io.databasify.sdk` label, since an image not built on the SDK cannot answer the commands deploy relies on;
@@ -17,14 +17,13 @@ The app used to deploy each node with its own Blade script. That script checked 
   - creates `/srv/<engine>`, `tls` and `conf`, owned by 64999, and writes the `.database` marker;
   - creates, starts or replaces `databasify-<engine>`;
   - prunes the repository's other images;
-  - waits until the engine answers, then tunes the host with the engine's profile ([0006](0006-engines-declare-their-host-profile.md)).
+  - waits until the engine answers, then tunes the host with the request's `hostProfile` ([0009](0009-engine-sdk-1-0-is-a-frozen-runtime.md)).
 - The run flags live in one place, `host/deploy.go`:
   - `--network host --ipc host --security-opt label=disable --restart unless-stopped --stop-timeout 960 --ulimit nofile=65536:65536`;
   - the `/srv/<engine>` volume;
   - the `io.databasify.database` and `io.databasify.node` labels;
   - the `DATABASIFY_IMAGE` environment variable.
 - `databasify host remove {databaseId, erase}` stops the node. With `erase`, it restores the host's tuning and removes only the directory whose `.database` marker matches.
-- `databasify tls install {certificate, key, ca}` writes the files each engine reads, so the app never names them.
 - The app installs the official host binary on its own, and `host deploy` leaves that binary alone ([0005](0005-images-are-the-only-release.md)).
 
 ## Consequences
@@ -35,11 +34,11 @@ The app used to deploy each node with its own Blade script. That script checked 
 
 ## Alternatives considered
 
-- **Keep the deploy script in the app:** every engine detail it carries (TLS file names, data guard, run flags) would stay in the app, against the rule that the app only calls `databasify`.
+- **Keep the deploy script in the app:** the data guard and run flags would be repeated for every engine.
 - **A container command for deploy:** a container can't create or replace itself, so this has to run on the host.
 
 ## Evidence
 
 - `host/deploy.go`
 - `host/commands.go`
-- `nodefs/tls.go`
+- `nodefs/nodefs.go`

@@ -26,9 +26,6 @@ func fakeTools(t *testing.T) string {
 	write(t, filepath.Join(dir, "docker"), `#!/usr/bin/env bash
 [ "$1 $2" = "buildx build" ] || exit 1
 printf '%s\n' "$@"
-for arg; do
-    case $arg in modules=*) (cd "${arg#modules=}" && find . -type f | LC_ALL=C sort | sed 's|^\./|staged |') ;; esac
-done
 `)
 	write(t, filepath.Join(dir, "curl"), "#!/usr/bin/env bash\necho 404\n")
 	for _, name := range []string{"docker", "curl"} {
@@ -48,15 +45,6 @@ func write(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func appendTo(t *testing.T, path string, content string) {
-	t.Helper()
-	existing, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, path, string(existing)+content)
 }
 
 func run(t *testing.T, engine string, stdin string, args ...string) (string, error) {
@@ -88,35 +76,9 @@ func versionsWith(t *testing.T, key string, line string, release string, tag str
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "versions.json")
 	engine := strings.SplitN(key, "-", 2)[0]
-	write(t, path, `{"sdk": "0.2.0", "images": {"`+key+`": {"engine": "`+engine+`", "line": "`+line+`", "release": "`+release+`", "base": {"image": "`+engine+`", "tag": "`+tag+`", "digest": "sha256:0"}}}}`)
+	write(t, path, `{"sdk": "1.0.0", "images": {"`+key+`": {"engine": "`+engine+`", "line": "`+line+`", "release": "`+release+`", "base": {"image": "`+engine+`", "tag": "`+tag+`", "digest": "sha256:0"}}}}`)
 
 	return path
-}
-
-func sdkCheckout(t *testing.T, engine string) string {
-	t.Helper()
-	dir := siblingModule(t, engine, "engine-sdk", "github.com/databasifylabs/engine-sdk")
-	write(t, filepath.Join(dir, "sdk.go"), "package sdk\n\nconst Version = \"0.2.0\"\n")
-
-	return dir
-}
-
-func siblingModule(t *testing.T, engine string, name string, module string) string {
-	t.Helper()
-	dir := filepath.Join(filepath.Dir(engine), name)
-	write(t, filepath.Join(dir, "go.mod"), "module "+module+"\n\ngo 1.25.0\n")
-
-	return dir
-}
-
-func replaceSdk(t *testing.T, engine string, path string) {
-	t.Helper()
-	replace(t, engine, "github.com/databasifylabs/engine-sdk", path)
-}
-
-func replace(t *testing.T, engine string, module string, path string) {
-	t.Helper()
-	appendTo(t, filepath.Join(engine, "go.mod"), "\nreplace "+module+" => "+path+"\n")
 }
 
 func planField(t *testing.T, plan string, name string) string {
@@ -152,12 +114,20 @@ func TestCheckRefusesAPinOutsideItsLine(t *testing.T) {
 	}
 }
 
-func TestCheckRefusesAnSdkVersionGoModDoesNotRequire(t *testing.T) {
+func TestCheckRefusesAnSdkPinOutsideOne(t *testing.T) {
 	engine := fixtureEngine(t)
-	write(t, filepath.Join(engine, "go.mod"), "module example.com/engine-example\n\ngo 1.25.0\n\nrequire github.com/databasifylabs/engine-sdk v0.3.0\n")
+	for _, pin := range []string{"0.2.2", "2.0.0", "v1.0.0"} {
+		versions := filepath.Join(engine, "versions.json")
+		content, err := os.ReadFile(versions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write(t, versions, strings.Replace(string(content), `"sdk": "1.0.0"`, `"sdk": "`+pin+`"`, 1))
 
-	if out, err := run(t, engine, "", "check"); err == nil || !strings.Contains(out, "0.3.0") {
-		t.Fatalf("an sdk pin go.mod does not require was accepted (%v): %s", err, out)
+		if out, err := run(t, engine, "", "check"); err == nil || !strings.Contains(out, pin) {
+			t.Errorf("the sdk pin %s was accepted (%v): %s", pin, err, out)
+		}
+		write(t, versions, string(content))
 	}
 }
 
@@ -197,8 +167,8 @@ func TestKeysListOnlyTheLinesOfTheEngine(t *testing.T) {
 func TestArgsLabelEveryImageWithTheSdkVersion(t *testing.T) {
 	out := mustRun(t, fixtureEngine(t), "args", "example-2")
 
-	if !strings.Contains("\n"+out+"\n", "\nSDK_VERSION=0.2.0\n") {
-		t.Fatalf("no SDK_VERSION=0.2.0 in %s", out)
+	if !strings.Contains("\n"+out+"\n", "\nSDK_VERSION=1.0.0\n") {
+		t.Fatalf("no SDK_VERSION=1.0.0 in %s", out)
 	}
 }
 
@@ -225,99 +195,40 @@ func TestPlanPublishesReleaseTagsOnlyFromTheDefaultBranch(t *testing.T) {
 	}
 }
 
-func TestBuildPassesAnEmptyModulesContextWithoutAReplacement(t *testing.T) {
-	engine := fixtureEngine(t)
+func TestBuildUsesTheCallersDockerfileWithoutAModulesContext(t *testing.T) {
+	out := mustRun(t, fixtureEngine(t), "build", "example-2")
 
-	out := mustRun(t, engine, "build", "example-2")
-
-	if !strings.Contains(out, "--build-context\nmodules=") {
-		t.Errorf("a build without a replacement passed no modules context: %s", out)
-	}
-	if strings.Contains(out, "staged ") {
-		t.Errorf("a build without a replacement staged files: %s", out)
+	if strings.Contains(out, "--build-context") {
+		t.Errorf("the build passed a build context: %s", out)
 	}
 	if !strings.Contains(out, filepath.Join("images", "example", "Dockerfile")) {
 		t.Errorf("the build does not use the caller's Dockerfile: %s", out)
 	}
 }
 
-func TestBuildStagesTheGoSourcesOfEveryLocalReplacement(t *testing.T) {
+func TestHashFollowsTheSdkPin(t *testing.T) {
 	engine := fixtureEngine(t)
-	sdk := sdkCheckout(t, engine)
-	write(t, filepath.Join(sdk, "sdk_test.go"), "package sdk\n")
-	write(t, filepath.Join(sdk, "README.md"), "docs\n")
-	other := siblingModule(t, engine, "engine-other", "example.com/engine-other")
-	write(t, filepath.Join(other, "family", "family.go"), "package family\n")
-	replaceSdk(t, engine, "../engine-sdk")
-	replace(t, engine, "example.com/engine-other", "../engine-other")
-
-	out := mustRun(t, engine, "build", "example-2")
-
-	for _, want := range []string{"staged engine-sdk/go.mod", "staged engine-sdk/sdk.go", "staged engine-other/go.mod", "staged engine-other/family/family.go"} {
-		if !strings.Contains(out, want+"\n") && !strings.HasSuffix(out, want) {
-			t.Errorf("%s missing: %s", want, out)
-		}
+	before := mustRun(t, engine, "hash", "example-2")
+	versions := filepath.Join(engine, "versions.json")
+	content, err := os.ReadFile(versions)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, unwanted := range []string{"sdk_test.go", "README.md"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("%s was staged: %s", unwanted, out)
-		}
+
+	write(t, versions, strings.Replace(string(content), `"sdk": "1.0.0"`, `"sdk": "1.0.1"`, 1))
+
+	if after := mustRun(t, engine, "hash", "example-2"); after == before {
+		t.Fatalf("the hash ignores the sdk pin: %s", after)
 	}
 }
 
-func TestBuildRefusesAReplacementOutsideTheSiblingLayout(t *testing.T) {
-	engine := fixtureEngine(t)
-	replaceSdk(t, engine, sdkCheckout(t, engine))
-
-	if out, err := run(t, engine, "", "build", "example-2"); err == nil || !strings.Contains(out, "../<dir>") {
-		t.Fatalf("an absolute replacement was accepted (%v): %s", err, out)
-	}
-}
-
-func TestHashFollowsTheSdkVersionInGoMod(t *testing.T) {
+func TestHashFollowsTheDockerfile(t *testing.T) {
 	engine := fixtureEngine(t)
 	before := mustRun(t, engine, "hash", "example-2")
 
-	write(t, filepath.Join(engine, "go.mod"), "module example.com/engine-example\n\ngo 1.25.0\n\nrequire github.com/databasifylabs/engine-sdk v0.2.1\n")
+	write(t, filepath.Join(engine, "images", "example", "Dockerfile"), "ARG BASE_IMAGE\nFROM ${BASE_IMAGE}\nRUN true\n")
 
 	if after := mustRun(t, engine, "hash", "example-2"); after == before {
-		t.Fatalf("the hash ignores the sdk version in go.mod: %s", after)
-	}
-}
-
-func TestHashFollowsTheReplacedSdkSource(t *testing.T) {
-	engine := fixtureEngine(t)
-	sdk := sdkCheckout(t, engine)
-	replaceSdk(t, engine, "../engine-sdk")
-	before := mustRun(t, engine, "hash", "example-2")
-
-	write(t, filepath.Join(sdk, "sdk.go"), "package sdk\n\nconst Version = \"0.2.1\"\n")
-
-	if after := mustRun(t, engine, "hash", "example-2"); after == before {
-		t.Fatalf("the hash ignores the replaced sdk source: %s", after)
-	}
-}
-
-func TestHashFollowsEveryReplacedModuleSource(t *testing.T) {
-	engine := fixtureEngine(t)
-	other := siblingModule(t, engine, "engine-other", "example.com/engine-other")
-	replace(t, engine, "example.com/engine-other", "../engine-other")
-	before := mustRun(t, engine, "hash", "example-2")
-
-	write(t, filepath.Join(other, "other.go"), "package other\n")
-
-	if after := mustRun(t, engine, "hash", "example-2"); after == before {
-		t.Fatalf("the hash ignores a replaced sibling module: %s", after)
-	}
-}
-
-func TestHashFailsWhenAReplacedModuleIsMissing(t *testing.T) {
-	engine := fixtureEngine(t)
-	replaceSdk(t, engine, "../missing-engine-sdk")
-
-	for _, args := range [][]string{{"hash", "example-2"}, {"build", "example-2"}, {"plan", "example-2", commit, "true"}} {
-		if out, err := run(t, engine, "", args...); err == nil || !strings.Contains(out, "not a module checkout") {
-			t.Errorf("%v did not refuse the missing sdk (%v): %s", args, err, out)
-		}
+		t.Fatalf("the hash ignores the Dockerfile: %s", after)
 	}
 }

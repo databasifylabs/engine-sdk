@@ -101,7 +101,7 @@ func TestATaskScriptSharesTheUnitsProcessGroup(t *testing.T) {
 
 func TestTaskCommandsIgnoreOtherOperations(t *testing.T) {
 	o, _ := testOperations(t)
-	_, _ = o.start("node ready", readyRoute(nil), []byte(readyInput))
+	_, _ = o.begin("other", "ready-1", []byte(readyInput))
 
 	_, statusErr := o.taskStatus("ready-1")
 	_, stopErr := o.stopTask("ready-1")

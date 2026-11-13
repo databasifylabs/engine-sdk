@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/databasifylabs/engine-sdk/command"
-	"github.com/databasifylabs/engine-sdk/contract"
 	"github.com/databasifylabs/engine-sdk/ctl"
 	"github.com/databasifylabs/engine-sdk/host"
 	"github.com/databasifylabs/engine-sdk/layout"
@@ -19,7 +18,7 @@ import (
 	"github.com/databasifylabs/engine-sdk/supervise"
 )
 
-const Version = "0.2.2"
+const Version = "1.0.0"
 
 const usageText = `usage: databasify <command>
 
@@ -32,7 +31,7 @@ commands:
   version                     print the SDK version
 `
 
-func Run(engine contract.Engine) int {
+func Run() int {
 	args := os.Args[1:]
 	if len(args) == 0 {
 		return usage(os.Stderr)
@@ -46,10 +45,8 @@ func Run(engine contract.Engine) int {
 		return serve(paths)
 	case "ctl":
 		return ctl.CLI{Socket: paths.Socket(), LogFile: paths.LogFile, Stdout: os.Stdout, Stderr: os.Stderr}.Run(args[1:])
-	case "engine-task":
-		return runTask(engine, args[1:])
 	case "operation-run":
-		return runOperation(engine, args[1:])
+		return runOperation(args[1:])
 	case "step":
 		return runStep(paths, args[1:])
 	case "step-kill":
@@ -62,7 +59,7 @@ func Run(engine contract.Engine) int {
 		return 0
 	}
 	if command.IsWellFormed(args) {
-		return command.Run(context.Background(), engine, Version, args, os.Stdin, os.Stdout)
+		return command.Run(context.Background(), Version, args, os.Stdin, os.Stdout)
 	}
 
 	return usage(os.Stderr)
@@ -196,27 +193,12 @@ func info(out io.Writer) int {
 	return 0
 }
 
-func runOperation(engine contract.Engine, args []string) int {
+func runOperation(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: databasify operation-run <key>")
 
 		return ctl.ExitUsage
 	}
 
-	return command.RunOperation(context.Background(), engine, args[0])
-}
-
-func runTask(engine contract.Engine, args []string) int {
-	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: databasify engine-task <name>")
-
-		return ctl.ExitUsage
-	}
-	if err := command.RunTask(context.Background(), engine, args[0]); err != nil {
-		fmt.Fprintf(os.Stderr, "databasify engine-task %s: %v\n", args[0], err)
-
-		return 1
-	}
-
-	return 0
+	return command.RunOperation(context.Background(), args[0])
 }

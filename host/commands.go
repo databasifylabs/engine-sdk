@@ -16,11 +16,12 @@ type hostHandler func(input []byte) ([]byte, error)
 
 var hostCommands = map[string]hostHandler{
 	"tune": func(input []byte) ([]byte, error) {
-		if _, err := command.Decode[dtos.Empty](input); err != nil {
+		request, err := command.Decode[requests.HostTune](input)
+		if err != nil {
 			return nil, err
 		}
 
-		return command.Encode(tuneHost(execDocker{}, hostSystem))
+		return command.Encode(tuneHost(execDocker{}, hostSystem, request.HostProfile))
 	},
 	"restore": func(input []byte) ([]byte, error) {
 		if _, err := command.Decode[dtos.Empty](input); err != nil {
@@ -68,7 +69,7 @@ func deployAndSettle(docker Docker, srv string, system system, request requests.
 	if err := waitForEngine(docker, reply.Container); err != nil {
 		return responses.HostDeploy{}, err
 	}
-	_, err = tuneEngineIn(docker, system, reply.Container)
+	_, err = tuneEngineIn(docker, system, reply.Container, request.HostProfile)
 
 	return reply, err
 }

@@ -31,7 +31,6 @@ jobs:
         working-directory: engine
     outputs:
       sdk: ${{ steps.sdk.outputs.version }}
-      go: ${{ steps.go.outputs.version }}
       builds: ${{ steps.plan.outputs.builds }}
       retags: ${{ steps.plan.outputs.retags }}
 
@@ -42,19 +41,9 @@ jobs:
           path: engine
           persist-credentials: false
 
-      - name: Read the Go version of the images
-        id: go
-        run: echo "version=$(jq -er '.go.tag | split("-")[0]' "$VERSIONS")" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ steps.go.outputs.version }}
-          cache: false
-
-      - name: Read the SDK version go.mod requires
+      - name: Read the SDK version the images pin
         id: sdk
-        run: echo "version=$(go mod edit -json | jq -er '.Require[] | select(.Path == "github.com/databasifylabs/engine-sdk") | .Version')" >> "$GITHUB_OUTPUT"
+        run: echo "version=v$(jq -er .sdk "$VERSIONS")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the SDK tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,34 +71,8 @@ jobs:
           echo "builds=$(jq -c '[.[] | select(.action == "build")]' <<< "$plans")" >> "$GITHUB_OUTPUT"
           echo "retags=$(jq -c '[.[] | select(.action == "retag")]' <<< "$plans")" >> "$GITHUB_OUTPUT"
 
-  test:
-    needs: plan
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: engine
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: engine
-          persist-credentials: false
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ needs.plan.outputs.go }}
-          cache-dependency-path: engine/go.sum
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -race -count=1 ./...
-
   build:
-    needs: [plan, test]
+    needs: plan
     if: needs.plan.outputs.builds != '[]'
     strategy:
       fail-fast: false
@@ -143,11 +106,11 @@ jobs:
           path: engine-sdk
           persist-credentials: false
 
-      - name: Set up Go
+      - name: Set up Go for the runtime conformance
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ needs.plan.outputs.go }}
-          cache-dependency-path: engine/go.sum
+          go-version-file: engine-sdk/go.mod
+          cache: false
 
       - name: Create a buildx builder
         run: |
